@@ -133,7 +133,7 @@ impl<R: Read + Seek> ZipArchive<R> {
         let data_start = resolve_data_start(&mut self.reader, &meta)?;
         self.reader.seek(SeekFrom::Start(data_start))?;
         let limited = (&mut self.reader).take(meta.compressed_size);
-        let decoder = Decoder::new(meta.method, limited)?;
+        let decoder = Decoder::new(meta.method, meta.uncompressed_size, limited)?;
         Ok(ZipFile {
             meta,
             data_start,

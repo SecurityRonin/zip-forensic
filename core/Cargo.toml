@@ -17,6 +17,11 @@ name = "zip_core"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 crc32fast = "1"
 thiserror = "2"
+# Pure-Rust, decompress-only codecs (NO *-sys). Versions verified to resolve.
+deflate64 = "0.1"        # method 9 — Deflate64 (pure Rust; zip-rs uses the same)
+bzip2-rs = "0.1"         # method 12 — bzip2 decompress-only, pure Rust
+ruzstd = "0.8"           # method 93 — Zstandard decoder, pure Rust
+lzma-rs = "0.3"          # methods 14/95 — LZMA (ZIP wrapper) + XZ, pure Rust
 # zip-rs is still used by the legacy open_entry fallback; it is dropped from normal
 # deps in HANDOFF step 3 once the native decode path covers every method, after
 # which it stays only as a dev-dependency oracle.

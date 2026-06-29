@@ -94,3 +94,12 @@ fn lzma_decodes_7z_fixture() {
     let bytes = fixture("lzma.zip");
     assert_zip_core_decodes(&bytes, "file.bin", CompressionMethod::Lzma, &payload());
 }
+
+#[test]
+fn xz_decodes_method95_fixture() {
+    // Method-95 (XZ) is rare in the wild; the fixture's .xz stream was produced by
+    // Python's `lzma` (FORMAT_XZ) and wrapped in a hand-built container. Ground
+    // truth (payload) confirmed by 7z extraction. See tests/data/README.md.
+    let bytes = fixture("xz.zip");
+    assert_zip_core_decodes(&bytes, "file.bin", CompressionMethod::Xz, &payload());
+}
