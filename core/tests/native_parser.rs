@@ -59,7 +59,7 @@ fn parses_entry_count_and_names_like_oracle() {
 #[test]
 fn stored_entry_decodes_byte_identical_to_oracle() {
     let payload: Vec<u8> = (0..40_000u32)
-        .map(|i| (i.wrapping_mul(2654435761) >> 11) as u8)
+        .map(|i| (i.wrapping_mul(2_654_435_761) >> 11) as u8)
         .collect();
     let bytes = build_oracle_zip(&[("image.bin", OracleMethod::Stored, &payload)]);
 

@@ -12,11 +12,17 @@ description = "Forensic-grade ZIP reader: deflate-block-indexed random access in
 name = "zip_core"
 
 [dependencies]
-zip = "2"
+# Pure-Rust DEFLATE (miniz_oxide backend). The default zlib/zlib-ng backend pulls
+# C, so the rust_backend feature is mandatory for the no-*-sys goal.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+crc32fast = "1"
 thiserror = "2"
+# zip-rs is still used by the legacy open_entry fallback; it is dropped from normal
+# deps in HANDOFF step 3 once the native decode path covers every method, after
+# which it stays only as a dev-dependency oracle.
+zip = "2"
 
 [dev-dependencies]
-flate2 = "1"
 tempfile = "3"
 
 [lints]

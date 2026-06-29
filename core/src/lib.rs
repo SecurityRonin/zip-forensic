@@ -12,6 +12,13 @@
 //! decompress (no worse than extracting the entry), so the type is universal.
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+mod archive;
+mod bytes;
+mod codec;
+mod cp437;
+
+pub use archive::{CompressionMethod, ZipArchive, ZipFile};
+
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -22,9 +29,38 @@ pub enum ZipCoreError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// The container structure was malformed.
+    #[error("malformed ZIP container: {0}")]
+    Format(#[from] FormatError),
+
     /// The underlying `zip` crate reported an error.
     #[error("zip error: {0}")]
     Zip(String),
+
+    /// An entry uses a compression method this reader does not (yet) decode.
+    #[error("unsupported compression method: {0:?}")]
+    UnsupportedMethod(CompressionMethod),
+
+    /// The decoded entry's CRC-32 did not match the central-directory value.
+    #[error(
+        "CRC-32 mismatch in entry {entry}: expected {expected:#010x}, computed {actual:#010x}"
+    )]
+    CrcMismatch {
+        /// The entry whose CRC failed.
+        entry: String,
+        /// The CRC recorded in the central directory.
+        expected: u32,
+        /// The CRC computed over the decoded bytes.
+        actual: u32,
+    },
+
+    /// No entry with the requested name exists.
+    #[error("entry not found: {0}")]
+    EntryNotFound(String),
+
+    /// The requested entry index is out of range.
+    #[error("entry index out of bounds: {0}")]
+    IndexOutOfBounds(usize),
 
     /// The entry's deflate stream was malformed (e.g. `LEN`/`NLEN` mismatch).
     #[error("malformed deflate stream in entry {entry}: {reason}")]
@@ -34,6 +70,45 @@ pub enum ZipCoreError {
         /// What was wrong.
         reason: String,
     },
+}
+
+/// Structural defects in a ZIP container. Each variant preserves the offending
+/// value/location (CLAUDE.md "Show the unrecognized value").
+#[derive(Debug, thiserror::Error)]
+pub enum FormatError {
+    /// A header read ran past the available bytes.
+    #[error("unexpected end of data")]
+    Truncated,
+
+    /// No End Of Central Directory record was found.
+    #[error("End Of Central Directory record not found")]
+    NoEocd,
+
+    /// A record did not start with its expected signature.
+    #[error("bad signature for {what} at offset {offset}")]
+    BadSignature {
+        /// Which record was expected.
+        what: &'static str,
+        /// Where it was looked for.
+        offset: u64,
+    },
+
+    /// The archive uses Zip64 features not yet implemented.
+    #[error("Zip64 archive not yet supported")]
+    Zip64Unsupported,
+
+    /// The central directory offset/size fall outside the file.
+    #[error("central directory out of range: offset {cd_offset}, size {cd_size}")]
+    CentralDirOutOfRange {
+        /// Declared central-directory offset.
+        cd_offset: u64,
+        /// Declared central-directory size.
+        cd_size: u64,
+    },
+
+    /// The EOCD declared an entry count beyond the safety ceiling.
+    #[error("declared entry count {0} exceeds the safety ceiling")]
+    TooManyEntries(usize),
 }
 
 /// One byte-addressable stored (`BTYPE=00`) deflate block within an entry.

@@ -107,7 +107,7 @@ fn read_at_matches_full_decompress_on_stored_block_entry() {
     let dir = tempfile::tempdir().unwrap();
     // > 64 KiB so the deflate stream spans multiple stored blocks (LEN is u16).
     let payload: Vec<u8> = (0..200_000u32)
-        .map(|i| (i.wrapping_mul(2654435761) >> 13) as u8)
+        .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
         .collect();
     let path = make_stored_block_zip(dir.path(), "fixture.zip", &payload);
 
