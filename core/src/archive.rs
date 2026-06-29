@@ -17,6 +17,8 @@ const EOCD_SIG: u32 = 0x0605_4b50;
 const CD_HEADER_SIG: u32 = 0x0201_4b50;
 const LFH_SIG: u32 = 0x0403_4b50;
 const ZIP64_EOCD_SIG: u32 = 0x0606_4b50;
+/// Central-directory digital-signature record header.
+const ARCHIVE_SIG_SIG: u32 = 0x0505_4b50;
 const ZIP64_LOCATOR_SIG: u32 = 0x0706_4b50;
 /// Header id of the Zip64 extended-information extra field.
 const ZIP64_EXTRA_ID: u16 = 0x0001;
@@ -150,6 +152,9 @@ pub struct ArchiveSummary {
     pub disk_number: u32,
     /// Disk on which the central directory starts (0 for a single-file archive).
     pub cd_start_disk: u32,
+    /// Length of the central-directory digital-signature record (header
+    /// 0x05054b50) if present, else `None`. The signature is not verified.
+    pub archive_signature_len: Option<u16>,
 }
 
 /// A parsed ZIP archive over a seekable reader.
@@ -489,6 +494,19 @@ fn parse_central_directory<R: Read + Seek>(
     let mut cd = vec![0u8; cd_size as usize];
     reader.read_exact(&mut cd)?;
 
+    // The reader now sits just past the central directory: a CD digital-signature
+    // record (header 0x05054b50) may follow before the EOCD. Recognize it and note
+    // its length (not verified).
+    let archive_signature_len = {
+        let mut hdr = [0u8; 6];
+        match reader.read_exact(&mut hdr) {
+            Ok(()) if hdr[..4] == ARCHIVE_SIG_SIG.to_le_bytes() => {
+                Some(u16::from_le_bytes([hdr[4], hdr[5]]))
+            }
+            _ => None,
+        }
+    };
+
     let entries = parse_cd_entries(&cd, total_entries)?;
     let summary = ArchiveSummary {
         file_len,
@@ -498,6 +516,7 @@ fn parse_central_directory<R: Read + Seek>(
         comment_len: eocd.comment_len,
         disk_number,
         cd_start_disk,
+        archive_signature_len,
     };
     Ok((entries, summary))
 }

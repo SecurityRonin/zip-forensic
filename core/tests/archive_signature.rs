@@ -67,7 +67,7 @@ fn zip_with_signature(sig_data: Option<&[u8]>) -> Vec<u8> {
 #[test]
 fn detects_central_directory_signature_record() {
     let signed = zip_with_signature(Some(b"\x30\x82pretend-PKCS7-signature"));
-    let mut ar = ZipArchive::new(Cursor::new(signed)).unwrap();
+    let ar = ZipArchive::new(Cursor::new(signed)).unwrap();
     assert_eq!(
         ar.summary().archive_signature_len,
         Some(b"\x30\x82pretend-PKCS7-signature".len() as u16),
@@ -79,6 +79,6 @@ fn detects_central_directory_signature_record() {
 
 #[test]
 fn unsigned_archive_reports_no_signature() {
-    let mut ar = ZipArchive::new(Cursor::new(zip_with_signature(None))).unwrap();
+    let ar = ZipArchive::new(Cursor::new(zip_with_signature(None))).unwrap();
     assert_eq!(ar.summary().archive_signature_len, None);
 }
