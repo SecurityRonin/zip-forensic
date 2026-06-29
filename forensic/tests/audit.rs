@@ -7,8 +7,8 @@
 use std::io::Cursor;
 
 use forensicnomicon::report::{Category, Observation, Severity};
-use zip_core::{CompressionMethod, EntryLayout, HeaderFields};
-use zip_forensic::{audit_layout, audit_reader, AnomalyKind};
+use zip_core::{ArchiveSummary, CompressionMethod, EntryLayout, HeaderFields};
+use zip_forensic::{audit_container, audit_layout, audit_reader, AnomalyKind};
 
 fn hf(name: &str) -> HeaderFields {
     HeaderFields {
@@ -103,6 +103,93 @@ fn clean_archive_has_no_anomalies() {
     assert!(found.is_empty(), "clean entry flagged: {found:?}");
 }
 
+// ---- remaining structural audits (HANDOFF section 3) ----
+
+fn two_entry_layout(
+    a: HeaderFields,
+    a_start: u64,
+    b: HeaderFields,
+    b_start: u64,
+) -> Vec<EntryLayout> {
+    vec![
+        EntryLayout {
+            index: 0,
+            lfh_offset: 0,
+            data_start: a_start,
+            central: a.clone(),
+            local: a,
+        },
+        EntryLayout {
+            index: 1,
+            lfh_offset: 200,
+            data_start: b_start,
+            central: b.clone(),
+            local: b,
+        },
+    ]
+}
+
+#[test]
+fn detects_overlapping_member_data() {
+    // entry0 occupies [100, 150); entry1 starts at 120 -> their data ranges overlap.
+    let mut a = hf("a.bin");
+    a.compressed_size = 50;
+    let mut b = hf("b.bin");
+    b.compressed_size = 50;
+    let found = audit_layout(&two_entry_layout(a, 100, b, 120));
+    assert!(codes(&found).contains(&"ZIP-OVERLAP"), "got {found:?}");
+}
+
+#[test]
+fn detects_bidi_override_in_name() {
+    // U+202E RIGHT-TO-LEFG OVERRIDE — the classic "gpj.exe" spoof.
+    let name = "invoice\u{202e}fdp.exe";
+    let found = audit_layout(&layout(hf(name), hf(name)));
+    assert!(codes(&found).contains(&"ZIP-NAME-BIDI"), "got {found:?}");
+}
+
+#[test]
+fn detects_control_chars_in_name() {
+    let name = "evil\u{0007}\u{0000}.txt";
+    let found = audit_layout(&layout(hf(name), hf(name)));
+    assert!(codes(&found).contains(&"ZIP-NAME-CONTROL"), "got {found:?}");
+}
+
+fn summary(file_len: u64, eocd_end: u64, disk: u32, cd_disk: u32) -> ArchiveSummary {
+    ArchiveSummary {
+        file_len,
+        central_dir_offset: 0,
+        central_dir_size: 0,
+        eocd_end_offset: eocd_end,
+        comment_len: 0,
+        disk_number: disk,
+        cd_start_disk: cd_disk,
+    }
+}
+
+#[test]
+fn detects_trailing_data_after_eocd() {
+    let s = summary(5000, 4000, 0, 0); // 1000 bytes past the EOCD
+    let found = audit_container(&s, &[]);
+    assert!(
+        codes(&found).contains(&"ZIP-TRAILING-DATA"),
+        "got {found:?}"
+    );
+    // No trailing data when the file ends exactly at the EOCD.
+    assert!(audit_container(&summary(4000, 4000, 0, 0), &[]).is_empty());
+}
+
+#[test]
+fn detects_spanning_disk_numbers() {
+    let found = audit_container(&summary(100, 100, 1, 0), &[]);
+    assert!(
+        codes(&found).contains(&"ZIP-SPANNING-ANOMALY"),
+        "got {found:?}"
+    );
+    // Sentinel disk numbers (zip64) are NOT a spanning anomaly.
+    assert!(audit_container(&summary(100, 100, 0xFFFF_FFFF, 0xFFFF_FFFF), &[]).is_empty());
+}
+
 // ---- end-to-end via audit_reader + the zip-core structural_view seam ----
 
 /// Minimal single-entry STORED zip; returns (bytes, absolute offset of the LFH
@@ -184,5 +271,23 @@ fn end_to_end_tampered_lfh_crc_is_flagged() {
         found.iter().any(|a| a.code == "ZIP-CD-LFH-MISMATCH"
             && matches!(&a.kind, AnomalyKind::CdLfhMismatch { field: "crc32", .. })),
         "expected a crc32 CD/LFH mismatch, got {found:?}"
+    );
+}
+
+#[test]
+fn end_to_end_corrupt_payload_is_a_crc_mismatch() {
+    let payload = b"the quick brown fox";
+    let (mut bytes, _) = stored_zip("doc.txt", payload);
+    // Flip a byte INSIDE the stored payload (CD/LFH CRC fields untouched), so the
+    // decoded data's CRC no longer matches the recorded value.
+    let pos = bytes
+        .windows(payload.len())
+        .position(|w| w == &payload[..])
+        .expect("payload present verbatim");
+    bytes[pos + 3] ^= 0xFF;
+    let found = audit_reader(Cursor::new(bytes)).unwrap();
+    assert!(
+        found.iter().any(|a| a.code == "ZIP-CRC-MISMATCH"),
+        "expected ZIP-CRC-MISMATCH, got {found:?}"
     );
 }

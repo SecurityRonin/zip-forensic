@@ -17,7 +17,9 @@ mod bytes;
 mod codec;
 mod cp437;
 
-pub use archive::{CompressionMethod, EntryLayout, HeaderFields, ZipArchive, ZipFile};
+pub use archive::{
+    ArchiveSummary, CompressionMethod, EntryLayout, HeaderFields, ZipArchive, ZipFile,
+};
 
 use std::io::Read;
 use std::path::{Path, PathBuf};

@@ -90,18 +90,49 @@ impl CentralEntry {
     }
 }
 
+/// Container-level offsets/counts, for the forensic analyzer's structural audits
+/// (trailing data, spanning, etc.). Returned by [`ZipArchive::summary`].
+#[derive(Debug, Clone)]
+pub struct ArchiveSummary {
+    /// Total file length.
+    pub file_len: u64,
+    /// Absolute offset of the central directory.
+    pub central_dir_offset: u64,
+    /// Declared central-directory size in bytes.
+    pub central_dir_size: u64,
+    /// Absolute offset just past the end of the 32-bit EOCD record (incl. its
+    /// comment) — bytes beyond this are trailing data.
+    pub eocd_end_offset: u64,
+    /// EOCD archive-comment length.
+    pub comment_len: u16,
+    /// Disk number recorded in the EOCD (0 for a single-file archive).
+    pub disk_number: u32,
+    /// Disk on which the central directory starts (0 for a single-file archive).
+    pub cd_start_disk: u32,
+}
+
 /// A parsed ZIP archive over a seekable reader.
 pub struct ZipArchive<R> {
     reader: R,
     entries: Vec<CentralEntry>,
+    summary: ArchiveSummary,
 }
 
 impl<R: Read + Seek> ZipArchive<R> {
     /// Parse the EOCD and central directory of `reader`.
     pub fn new(mut reader: R) -> Result<Self, ZipCoreError> {
         let file_len = reader.seek(SeekFrom::End(0))?;
-        let entries = parse_central_directory(&mut reader, file_len)?;
-        Ok(Self { reader, entries })
+        let (entries, summary) = parse_central_directory(&mut reader, file_len)?;
+        Ok(Self {
+            reader,
+            entries,
+            summary,
+        })
+    }
+
+    /// Container-level offsets/counts for structural audits.
+    pub fn summary(&self) -> &ArchiveSummary {
+        &self.summary
     }
 
     /// Number of entries in the central directory.
@@ -265,10 +296,20 @@ fn read_lfh_fields<R: Read + Seek>(
 }
 
 /// Locate + parse the EOCD, then read and parse the central directory.
+/// The 32-bit EOCD fields. Any size/offset/count may be a sentinel for Zip64.
+struct Eocd32 {
+    disk_number: u16,
+    cd_start_disk: u16,
+    total_entries: u16,
+    cd_size: u32,
+    cd_offset: u32,
+    comment_len: u16,
+}
+
 fn parse_central_directory<R: Read + Seek>(
     reader: &mut R,
     file_len: u64,
-) -> Result<Vec<CentralEntry>, ZipCoreError> {
+) -> Result<(Vec<CentralEntry>, ArchiveSummary), ZipCoreError> {
     let scan_len = file_len.min(EOCD_SCAN_MAX as u64);
     if scan_len < EOCD_MIN as u64 {
         return Err(FormatError::NoEocd.into());
@@ -279,20 +320,29 @@ fn parse_central_directory<R: Read + Seek>(
     reader.read_exact(&mut tail)?;
 
     let eocd_rel = find_eocd(&tail).ok_or(FormatError::NoEocd)?;
-    let (cd_off32, cd_size32, total16) = parse_eocd(&tail[eocd_rel..])?;
+    let eocd = parse_eocd(&tail[eocd_rel..])?;
+    // Absolute end of the 32-bit EOCD record incl. its comment; the EOCD is always
+    // the last structure, so anything past this is trailing data.
+    let eocd_end_offset =
+        scan_start + eocd_rel as u64 + EOCD_MIN as u64 + u64::from(eocd.comment_len);
 
     // Promote to Zip64 when any base field is a sentinel: the real 64-bit
-    // offset/size/count live in the Zip64 EOCD record reached via its locator.
-    let (cd_offset, cd_size, total_entries) =
-        if cd_off32 == U32_SENTINEL || cd_size32 == U32_SENTINEL || total16 == U16_SENTINEL {
-            resolve_zip64_eocd(reader, &tail, eocd_rel)?
-        } else {
-            (
-                u64::from(cd_off32),
-                u64::from(cd_size32),
-                usize::from(total16),
-            )
-        };
+    // offset/size/count/disk live in the Zip64 EOCD record reached via its locator.
+    let (cd_offset, cd_size, total_entries, disk_number, cd_start_disk) = if eocd.cd_offset
+        == U32_SENTINEL
+        || eocd.cd_size == U32_SENTINEL
+        || eocd.total_entries == U16_SENTINEL
+    {
+        resolve_zip64_eocd(reader, &tail, eocd_rel)?
+    } else {
+        (
+            u64::from(eocd.cd_offset),
+            u64::from(eocd.cd_size),
+            usize::from(eocd.total_entries),
+            u32::from(eocd.disk_number),
+            u32::from(eocd.cd_start_disk),
+        )
+    };
 
     match cd_offset.checked_add(cd_size) {
         Some(end) if end <= file_len => {}
@@ -306,7 +356,17 @@ fn parse_central_directory<R: Read + Seek>(
     let mut cd = vec![0u8; cd_size as usize];
     reader.read_exact(&mut cd)?;
 
-    parse_cd_entries(&cd, total_entries)
+    let entries = parse_cd_entries(&cd, total_entries)?;
+    let summary = ArchiveSummary {
+        file_len,
+        central_dir_offset: cd_offset,
+        central_dir_size: cd_size,
+        eocd_end_offset,
+        comment_len: eocd.comment_len,
+        disk_number,
+        cd_start_disk,
+    };
+    Ok((entries, summary))
 }
 
 /// Scan backward for the EOCD signature, returning its offset within `tail`.
@@ -321,20 +381,27 @@ fn find_eocd(tail: &[u8]) -> Option<usize> {
         .find(|&i| tail[i..i + 4] == sig)
 }
 
-/// Parse the fixed EOCD fields. Returns the raw 32-bit `(cd_offset, cd_size,
-/// total_entries)`; any value may be a sentinel signalling Zip64.
-fn parse_eocd(buf: &[u8]) -> Result<(u32, u32, u16), ZipCoreError> {
+/// Parse the fixed EOCD fields. Any size/offset/count may be a Zip64 sentinel.
+fn parse_eocd(buf: &[u8]) -> Result<Eocd32, ZipCoreError> {
     let mut r = Reader::new(buf);
     if r.u32()? != EOCD_SIG {
         return Err(FormatError::NoEocd.into());
     }
-    let _disk = r.u16()?;
-    let _cd_disk = r.u16()?;
+    let disk_number = r.u16()?;
+    let cd_start_disk = r.u16()?;
     let _entries_this_disk = r.u16()?;
     let total_entries = r.u16()?;
     let cd_size = r.u32()?;
     let cd_offset = r.u32()?;
-    Ok((cd_offset, cd_size, total_entries))
+    let comment_len = r.u16()?;
+    Ok(Eocd32 {
+        disk_number,
+        cd_start_disk,
+        total_entries,
+        cd_size,
+        cd_offset,
+        comment_len,
+    })
 }
 
 /// Resolve the real central-directory location from the Zip64 EOCD record. The
@@ -344,7 +411,7 @@ fn resolve_zip64_eocd<R: Read + Seek>(
     reader: &mut R,
     tail: &[u8],
     eocd_rel: usize,
-) -> Result<(u64, u64, usize), ZipCoreError> {
+) -> Result<(u64, u64, usize, u32, u32), ZipCoreError> {
     if eocd_rel < ZIP64_LOCATOR_LEN {
         return Err(FormatError::Zip64Unsupported.into());
     }
@@ -369,15 +436,15 @@ fn resolve_zip64_eocd<R: Read + Seek>(
     let _record_size = r.u64()?;
     let _version_made_by = r.u16()?;
     let _version_needed = r.u16()?;
-    let _disk = r.u32()?;
-    let _cd_disk = r.u32()?;
+    let disk_number = r.u32()?;
+    let cd_start_disk = r.u32()?;
     let _entries_this_disk = r.u64()?;
     let total_entries = r.u64()?;
     let cd_size = r.u64()?;
     let cd_offset = r.u64()?;
     let total =
         usize::try_from(total_entries).map_err(|_| FormatError::TooManyEntries(usize::MAX))?;
-    Ok((cd_offset, cd_size, total))
+    Ok((cd_offset, cd_size, total, disk_number, cd_start_disk))
 }
 
 /// Parse `total_entries` central-directory file headers from `cd`.
