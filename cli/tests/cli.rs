@@ -120,3 +120,47 @@ fn no_subcommand_is_usage_error() {
     assert!(run(&["zip4n6", "bogus", "x"]).is_err());
     assert!(run(&["zip4n6", "list"]).is_err()); // missing path
 }
+
+#[test]
+fn missing_file_is_io_error_and_displays() {
+    let err = run(&["zip4n6", "list", "/no/such/zip-file.zip"]).unwrap_err();
+    assert!(matches!(err, zip_forensic_cli::CliError::Io(_)));
+    assert!(format!("{err}").contains("I/O error"));
+}
+
+#[test]
+fn garbage_file_is_zip_error_and_displays() {
+    let (_d, path) = write_tmp(b"not a zip at all, just bytes");
+    let err = run(&["zip4n6", "audit", &path]).unwrap_err();
+    assert!(matches!(err, zip_forensic_cli::CliError::Zip(_)));
+    assert!(format!("{err}").contains("zip error"));
+}
+
+#[test]
+fn usage_error_displays_usage_text() {
+    let err = run(&["zip4n6"]).unwrap_err();
+    assert!(format!("{err}").contains("usage: zip4n6"));
+}
+
+// ---- exercise the actual binary shell (main.rs) ----
+
+#[test]
+fn binary_runs_list() {
+    let (bytes, _) = stored_zip("xfile.bin", b"hi");
+    let (_d, path) = write_tmp(&bytes);
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_zip4n6"))
+        .args(["list", &path])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("xfile.bin"));
+}
+
+#[test]
+fn binary_bad_args_exits_2() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_zip4n6"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("usage"));
+}
