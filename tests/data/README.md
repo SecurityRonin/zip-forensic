@@ -35,6 +35,22 @@ SHA-256 of the plaintext: `26560fa5bc1c428e425955954f88bfdd9e3766238a1d66c5586b3
   instead validated in-memory against the zip-rs writer/reader oracle (which uses
   the C libbz2/libzstd) — independent of zip-core's pure-Rust decoders.
 
+## `structure/` — container-structure fixtures
+
+Payload: `payload[i] = (i * 37) as u8, for i in 0..3000`. Consumed by
+`core/tests/structure.rs`.
+
+| File | What it exercises | Generator |
+|------|-------------------|-----------|
+| `zip64.zip` | `force_zip64` real-tool archive (zip64 extra in LFH, real CD sizes) | Python `zipfile`, `zf.open(force_zip64=True)` |
+| `datadesc.zip` | data descriptor (GP flag bit 3) — written to an unseekable stream | Python `zipfile` to a non-seekable `RawIOBase` |
+| `zip64_cd_extra.zip` | **CD** base sizes = 0xFFFFFFFF resolved from the Zip64 extra field (id 0x0001) | hand-built container (struct) |
+| `zip64_eocd.zip` | **EOCD** sentinel offset/count resolved via the Zip64 EOCD record + locator | hand-built container (struct) |
+
+The two hand-built zip64 fixtures are confirmed valid by an independent oracle:
+`7z e` reproduces the payload byte-for-byte (SHA-256
+`66539d934bf91e18d36aeda8c1de82da94c6a02d9b84a9c8e65e0d1a88072581`).
+
 ## Large artifacts (gitignored)
 
 `core/tests/differential.rs` reads a real DFIR-Madness E01-in-zip when
