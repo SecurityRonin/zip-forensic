@@ -54,6 +54,28 @@ pub enum CompressionMethod {
     Zstd,
     /// Method 95 — XZ.
     Xz,
+    /// Method 1 — legacy Shrink (not decoded; recognized so it can be named).
+    Shrunk,
+    /// Methods 2–5 — legacy Reduce (not decoded).
+    Reduced,
+    /// Method 6 — legacy Implode (not decoded).
+    Imploded,
+    /// Method 10 — PKWARE DCL Implode (not decoded).
+    DclImploded,
+    /// Method 16 — IBM z/OS CMPSC (not decoded).
+    IbmCmpsc,
+    /// Method 18 — IBM TERSE (not decoded).
+    IbmTerse,
+    /// Method 19 — IBM LZ77 / PFS (not decoded).
+    IbmLz77,
+    /// Method 94 — MP3 (not decoded).
+    Mp3,
+    /// Method 96 — JPEG variant (not decoded).
+    Jpeg,
+    /// Method 97 — WavPack (not decoded).
+    WavPack,
+    /// Method 98 — PPMd (not decoded).
+    Ppmd,
     /// Any other method id — value preserved so callers can report it.
     Unknown(u16),
 }
@@ -68,6 +90,17 @@ impl CompressionMethod {
             14 => Self::Lzma,
             93 => Self::Zstd,
             95 => Self::Xz,
+            1 => Self::Shrunk,
+            2..=5 => Self::Reduced,
+            6 => Self::Imploded,
+            10 => Self::DclImploded,
+            16 => Self::IbmCmpsc,
+            18 => Self::IbmTerse,
+            19 => Self::IbmLz77,
+            94 => Self::Mp3,
+            96 => Self::Jpeg,
+            97 => Self::WavPack,
+            98 => Self::Ppmd,
             other => Self::Unknown(other),
         }
     }

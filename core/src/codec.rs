@@ -71,7 +71,9 @@ impl<Rd: Read> Decoder<Rd> {
                     .map_err(|e| io::Error::other(e.to_string()))?;
                 Ok(Self::Buffered(Cursor::new(out.into_inner())))
             }
-            CompressionMethod::Unknown(_) => Err(ZipCoreError::UnsupportedMethod(method)),
+            // Legacy/rare methods (Shrink/Reduce/Implode/DCL/IBM/MP3/JPEG/WavPack/
+            // PPMd) and any unrecognized id: recognized but not decoded — fail loud.
+            _ => Err(ZipCoreError::UnsupportedMethod(method)),
         }
     }
 }
