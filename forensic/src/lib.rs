@@ -15,7 +15,7 @@ use std::io::{Read, Seek};
 use std::path::Path;
 
 use forensicnomicon::report::{Category, Evidence, Observation, Severity};
-use zip_core::{EntryLayout, ZipArchive, ZipCoreError};
+use zip_core::{ArchiveSummary, EntryLayout, ZipArchive, ZipCoreError};
 
 /// The producing analyzer name embedded in emitted findings' `Source`.
 pub const ANALYZER: &str = "zip-forensic";
@@ -61,6 +61,54 @@ pub enum AnomalyKind {
         /// Number of bytes before the first local file header.
         length: u64,
     },
+    /// Bytes exist after the End Of Central Directory record — consistent with
+    /// appended/hidden data (often benign; graded low).
+    TrailingData {
+        /// Number of bytes after the EOCD record.
+        length: u64,
+    },
+    /// Two members' data ranges overlap — structurally impossible for a normal
+    /// archive; consistent with a crafted/concealment layout.
+    Overlap {
+        /// First entry index.
+        index_a: usize,
+        /// Second entry index.
+        index_b: usize,
+        /// Byte where the overlap begins.
+        at: u64,
+    },
+    /// Non-zero disk numbers in a single-file archive — consistent with spanning
+    /// markers where none are expected.
+    SpanningAnomaly {
+        /// EOCD disk number.
+        disk_number: u32,
+        /// Disk on which the central directory starts.
+        cd_start_disk: u32,
+    },
+    /// An entry name contains an RTL/bidi override codepoint — consistent with a
+    /// filename-spoofing attack (e.g. `...\u{202e}gpj.exe`).
+    NameBidi {
+        /// Entry index.
+        index: usize,
+        /// The offending raw name.
+        name: String,
+    },
+    /// An entry name contains control characters or NUL — consistent with display
+    /// spoofing or path-handling exploits.
+    NameControl {
+        /// Entry index.
+        index: usize,
+        /// The offending raw name.
+        name: String,
+    },
+    /// The decoded entry's CRC-32 disagrees with the recorded value — consistent
+    /// with corruption or tampering of the entry data.
+    CrcMismatch {
+        /// Entry index.
+        index: usize,
+        /// Entry name.
+        name: String,
+    },
 }
 
 impl AnomalyKind {
@@ -68,9 +116,15 @@ impl AnomalyKind {
     #[must_use]
     pub fn severity(&self) -> Severity {
         match self {
-            AnomalyKind::CdLfhMismatch { .. } | AnomalyKind::NameTraversal { .. } => Severity::High,
-            AnomalyKind::NameAbsolute { .. } => Severity::Medium,
-            AnomalyKind::PrependedData { .. } => Severity::Low,
+            AnomalyKind::CdLfhMismatch { .. }
+            | AnomalyKind::NameTraversal { .. }
+            | AnomalyKind::NameBidi { .. }
+            | AnomalyKind::CrcMismatch { .. } => Severity::High,
+            AnomalyKind::NameAbsolute { .. }
+            | AnomalyKind::Overlap { .. }
+            | AnomalyKind::SpanningAnomaly { .. }
+            | AnomalyKind::NameControl { .. } => Severity::Medium,
+            AnomalyKind::PrependedData { .. } | AnomalyKind::TrailingData { .. } => Severity::Low,
         }
     }
 
@@ -82,6 +136,12 @@ impl AnomalyKind {
             AnomalyKind::NameTraversal { .. } => "ZIP-NAME-TRAVERSAL",
             AnomalyKind::NameAbsolute { .. } => "ZIP-NAME-ABSOLUTE",
             AnomalyKind::PrependedData { .. } => "ZIP-PREPENDED-DATA",
+            AnomalyKind::TrailingData { .. } => "ZIP-TRAILING-DATA",
+            AnomalyKind::Overlap { .. } => "ZIP-OVERLAP",
+            AnomalyKind::SpanningAnomaly { .. } => "ZIP-SPANNING-ANOMALY",
+            AnomalyKind::NameBidi { .. } => "ZIP-NAME-BIDI",
+            AnomalyKind::NameControl { .. } => "ZIP-NAME-CONTROL",
+            AnomalyKind::CrcMismatch { .. } => "ZIP-CRC-MISMATCH",
         }
     }
 
@@ -89,11 +149,17 @@ impl AnomalyKind {
     #[must_use]
     pub fn category(&self) -> Category {
         match self {
-            AnomalyKind::CdLfhMismatch { .. } => Category::Integrity,
+            AnomalyKind::CdLfhMismatch { .. } | AnomalyKind::CrcMismatch { .. } => {
+                Category::Integrity
+            }
             AnomalyKind::NameTraversal { .. } | AnomalyKind::NameAbsolute { .. } => {
                 Category::Threat
             }
-            AnomalyKind::PrependedData { .. } => Category::Structure,
+            AnomalyKind::NameBidi { .. } | AnomalyKind::NameControl { .. } => Category::Concealment,
+            AnomalyKind::PrependedData { .. }
+            | AnomalyKind::TrailingData { .. }
+            | AnomalyKind::Overlap { .. }
+            | AnomalyKind::SpanningAnomaly { .. } => Category::Structure,
         }
     }
 
@@ -123,6 +189,37 @@ impl AnomalyKind {
                 "{length} byte(s) precede the first local file header — consistent with a \
                  self-extractor stub or polyglot (often benign)"
             ),
+            AnomalyKind::TrailingData { length } => format!(
+                "{length} byte(s) follow the End Of Central Directory record — consistent with \
+                 appended or hidden data (often benign)"
+            ),
+            AnomalyKind::Overlap {
+                index_a,
+                index_b,
+                at,
+            } => format!(
+                "entries {index_a} and {index_b} have overlapping data ranges at offset {at} — \
+                 structurally impossible for a normal archive"
+            ),
+            AnomalyKind::SpanningAnomaly {
+                disk_number,
+                cd_start_disk,
+            } => format!(
+                "non-zero disk numbers (disk {disk_number}, cd-start disk {cd_start_disk}) in a \
+                 single-file archive — consistent with unexpected spanning markers"
+            ),
+            AnomalyKind::NameBidi { index, name } => format!(
+                "entry {index}: name `{name}` contains an RTL/bidi override codepoint — consistent \
+                 with filename-extension spoofing"
+            ),
+            AnomalyKind::NameControl { index, name } => format!(
+                "entry {index}: name `{name:?}` contains control characters or NUL — consistent \
+                 with display spoofing or path-handling exploits"
+            ),
+            AnomalyKind::CrcMismatch { index, name } => format!(
+                "entry {index} ({name}): decoded data CRC-32 disagrees with the recorded value — \
+                 consistent with corruption or tampering of the entry data"
+            ),
         }
     }
 
@@ -145,16 +242,40 @@ impl AnomalyKind {
                     location: None,
                 },
             ],
-            AnomalyKind::NameTraversal { name, .. } | AnomalyKind::NameAbsolute { name, .. } => {
-                vec![Evidence {
-                    field: "name".to_string(),
-                    value: name.clone(),
-                    location: None,
-                }]
-            }
+            AnomalyKind::NameTraversal { name, .. }
+            | AnomalyKind::NameAbsolute { name, .. }
+            | AnomalyKind::NameBidi { name, .. }
+            | AnomalyKind::NameControl { name, .. } => vec![Evidence {
+                field: "name".to_string(),
+                value: format!("{name:?}"),
+                location: None,
+            }],
             AnomalyKind::PrependedData { length } => vec![Evidence {
                 field: "prepended_bytes".to_string(),
                 value: length.to_string(),
+                location: None,
+            }],
+            AnomalyKind::TrailingData { length } => vec![Evidence {
+                field: "trailing_bytes".to_string(),
+                value: length.to_string(),
+                location: None,
+            }],
+            AnomalyKind::Overlap { at, .. } => vec![Evidence {
+                field: "overlap_offset".to_string(),
+                value: at.to_string(),
+                location: None,
+            }],
+            AnomalyKind::SpanningAnomaly {
+                disk_number,
+                cd_start_disk,
+            } => vec![Evidence {
+                field: "disk_numbers".to_string(),
+                value: format!("disk={disk_number}, cd_start_disk={cd_start_disk}"),
+                location: None,
+            }],
+            AnomalyKind::CrcMismatch { name, .. } => vec![Evidence {
+                field: "entry".to_string(),
+                value: name.clone(),
                 location: None,
             }],
         }
@@ -210,7 +331,53 @@ impl Observation for Anomaly {
 pub fn audit_reader<R: Read + Seek>(reader: R) -> Result<Vec<Anomaly>, ZipCoreError> {
     let mut archive = ZipArchive::new(reader)?;
     let layout = archive.structural_view()?;
-    Ok(audit_layout(&layout))
+    let summary = archive.summary().clone();
+
+    let mut out = audit_layout(&layout);
+    out.extend(audit_container(&summary, &layout));
+
+    // CRC-32 verification: decode each entry; a CrcMismatch (and only that) is an
+    // integrity finding. Other decode errors are not asserted here — they surface
+    // through the reader API where the caller drives extraction.
+    for (i, entry_layout) in layout.iter().enumerate() {
+        if let Ok(mut entry) = archive.by_index(i) {
+            let mut sink = std::io::sink();
+            if let Err(e) = std::io::copy(&mut entry, &mut sink) {
+                if matches!(
+                    e.get_ref()
+                        .and_then(|inner| inner.downcast_ref::<ZipCoreError>()),
+                    Some(ZipCoreError::CrcMismatch { .. })
+                ) {
+                    out.push(Anomaly::new(AnomalyKind::CrcMismatch {
+                        index: i,
+                        name: entry_layout.central.name.clone(),
+                    }));
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Container-level audits from the archive summary: trailing data after the EOCD
+/// and unexpected spanning disk numbers.
+#[must_use]
+pub fn audit_container(summary: &ArchiveSummary, _layout: &[EntryLayout]) -> Vec<Anomaly> {
+    let mut out = Vec::new();
+    if summary.file_len > summary.eocd_end_offset {
+        out.push(Anomaly::new(AnomalyKind::TrailingData {
+            length: summary.file_len - summary.eocd_end_offset,
+        }));
+    }
+    // 0xFFFFFFFF is the zip64 disk sentinel, not a real spanning marker.
+    let span = |d: u32| d != 0 && d != 0xFFFF_FFFF;
+    if span(summary.disk_number) || span(summary.cd_start_disk) {
+        out.push(Anomaly::new(AnomalyKind::SpanningAnomaly {
+            disk_number: summary.disk_number,
+            cd_start_disk: summary.cd_start_disk,
+        }));
+    }
+    out
 }
 
 /// Audit a ZIP file on disk for structural anomalies.
@@ -233,6 +400,34 @@ pub fn audit_layout(layout: &[EntryLayout]) -> Vec<Anomaly> {
     for e in layout {
         out.extend(audit_entry(e));
     }
+    out.extend(audit_overlaps(layout));
+    out
+}
+
+/// Detect members whose `[data_start, data_start + compressed_size)` ranges
+/// overlap — structurally impossible in a normal archive.
+fn audit_overlaps(layout: &[EntryLayout]) -> Vec<Anomaly> {
+    let mut spans: Vec<(usize, u64, u64)> = layout
+        .iter()
+        .map(|e| {
+            let end = e.data_start.saturating_add(e.central.compressed_size);
+            (e.index, e.data_start, end)
+        })
+        .collect();
+    spans.sort_by_key(|&(_, start, _)| start);
+
+    let mut out = Vec::new();
+    for pair in spans.windows(2) {
+        let (a_idx, _a_start, a_end) = pair[0];
+        let (b_idx, b_start, _b_end) = pair[1];
+        if b_start < a_end {
+            out.push(Anomaly::new(AnomalyKind::Overlap {
+                index_a: a_idx,
+                index_b: b_idx,
+                at: b_start,
+            }));
+        }
+    }
     out
 }
 
@@ -249,6 +444,18 @@ fn audit_entry(e: &EntryLayout) -> Vec<Anomaly> {
     }
     if is_absolute(name) {
         out.push(Anomaly::new(AnomalyKind::NameAbsolute {
+            index: e.index,
+            name: name.clone(),
+        }));
+    }
+    if has_bidi_override(name) {
+        out.push(Anomaly::new(AnomalyKind::NameBidi {
+            index: e.index,
+            name: name.clone(),
+        }));
+    }
+    if has_control_chars(name) {
+        out.push(Anomaly::new(AnomalyKind::NameControl {
             index: e.index,
             name: name.clone(),
         }));
@@ -337,4 +544,20 @@ fn is_absolute(name: &str) -> bool {
     }
     let b = name.as_bytes();
     b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic()
+}
+
+/// Unicode bidirectional control codepoints used to disguise file extensions
+/// (RLO/LRO/RLE/LRE/PDF and the isolate family).
+fn has_bidi_override(name: &str) -> bool {
+    name.chars().any(|c| {
+        matches!(c,
+            '\u{202A}'..='\u{202E}' // LRE, RLE, PDF, LRO, RLO
+            | '\u{2066}'..='\u{2069}' // LRI, RLI, FSI, PDI
+            | '\u{200E}' | '\u{200F}') // LRM, RLM
+    })
+}
+
+/// Control characters (C0/C1) or NUL embedded in a name.
+fn has_control_chars(name: &str) -> bool {
+    name.chars().any(char::is_control)
 }
