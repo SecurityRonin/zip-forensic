@@ -1,6 +1,6 @@
 # Privacy Policy
 
-`zip-core` and `zip-forensic` are offline Rust libraries. They run entirely on the
+`zip-full-core` and `zip-forensic` are offline Rust libraries. They run entirely on the
 machine that invokes them.
 
 - **No data collection.** The crates do not collect, transmit, or phone home any

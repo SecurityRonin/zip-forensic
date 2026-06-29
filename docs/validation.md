@@ -7,12 +7,12 @@ format reference is the PKWARE APPNOTE.TXT ZIP specification
 
 ## The no-C-FFI guarantee (the project's reason for being)
 
-`zip-core`'s runtime dependency tree contains only pure-Rust crates. The three
+`zip-full-core`'s runtime dependency tree contains only pure-Rust crates. The three
 C-FFI libraries the `zip` crate pulls (`bzip2-sys`, `zstd-sys`, `lzma-sys`) are
 absent:
 
 ```
-cargo tree -p zip-core -e normal | grep -- -sys   # empty
+cargo tree -p zip-full-core -e normal | grep -- -sys   # empty
 ```
 
 `zip` (zip-rs) is retained ONLY as a `dev-dependency` differential oracle; it is
@@ -21,7 +21,7 @@ not in the normal tree and is never shipped to downstream consumers.
 ## Codec decode — tier 1
 
 Each codec is validated byte-for-byte against a known plaintext payload carried in
-a fixture produced by an **independent** encoder, decoded by zip-core's pure-Rust
+a fixture produced by an **independent** encoder, decoded by zip-full-core's pure-Rust
 path (`tests/data/README.md` records every generator command and hash):
 
 | Method | Oracle / fixture source | Cross-check |
@@ -35,7 +35,7 @@ path (`tests/data/README.md` records every generator command and hash):
 
 ## Decryption (tier-1)
 
-`zip-core` decrypts encrypted entries via `by_index_decrypt`/`by_name_decrypt`
+`zip-full-core` decrypts encrypted entries via `by_index_decrypt`/`by_name_decrypt`
 (plain `by_*` refuses an encrypted entry — secure by default):
 
 | Scheme | Implementation | Validation |
@@ -66,14 +66,14 @@ real-world data versus only on independent-tool fixtures:
 | Stored / Deflate | thousands (every E01-in-zip, collection, memory dump) | **yes** — see below |
 | Deflate64 (9) | a few real CTF artifacts | **yes** — see below |
 | Bzip2 / LZMA / XZ | **none** (only our own fixtures) | not present in the wild; independent-tool fixtures + the zip-rs C-lib oracle are the appropriate tier-1 |
-| AES / ZipCrypto | a real encrypted-malware sample | out of scope (zip-core does not decrypt) |
+| AES / ZipCrypto | a real encrypted-malware sample | out of scope (zip-full-core does not decrypt) |
 
 This matches the design premise: real forensic zips are overwhelmingly
 Stored/Deflate, with Deflate64 appearing for very large (>4 GiB-window) files.
 
 - **Deflate (real, multi-GB):** the DFIR-Madness "Stolen Szechuan Sauce"
   `DC01-E01.zip` holds a 2,524,848,357-byte Windows disk E01 as a normal-deflate
-  entry (CRC `ff0ce1a7`). zip-core's native decode is compared **byte-for-byte to
+  entry (CRC `ff0ce1a7`). zip-full-core's native decode is compared **byte-for-byte to
   the separately-extracted E01** (an independent ground-truth answer key) in a
   single streaming pass, and its CRC-32 is verified at EOF.
   Test: `native_decode_matches_extracted_ground_truth`
@@ -83,7 +83,7 @@ Stored/Deflate, with Deflate64 appearing for very large (>4 GiB-window) files.
   `read_at` fast path is validated by the synthetic stored-block tests.
 - **Deflate64 (real, 4 GiB):** the SecurityNik "TOTAL RECALL" memory-forensics CTF
   zip compresses a 4,293,816,320-byte Windows memory dump with Deflate64 (method 9,
-  CRC `de173b7f`). zip-core decodes the entries and the recorded CRC-32 (the CTF
+  CRC `de173b7f`). zip-full-core decodes the entries and the recorded CRC-32 (the CTF
   author's tool is the independent oracle) is verified at EOF.
   Test: `deflate64_decodes_real_securitynik_ctf`
   (env `ZIP_CORE_REAL_DEFLATE64_ZIP`, `…_FULL=1` for the 4 GiB entry).

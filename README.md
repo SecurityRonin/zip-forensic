@@ -1,8 +1,8 @@
 # zip-forensic
 
-[![Crates.io: zip-core](https://img.shields.io/crates/v/zip-core?label=zip-core)](https://crates.io/crates/zip-core)
+[![Crates.io: zip-full-core](https://img.shields.io/crates/v/zip-full-core?label=zip-full-core)](https://crates.io/crates/zip-full-core)
 [![Crates.io: zip-forensic](https://img.shields.io/crates/v/zip-forensic?label=zip-forensic)](https://crates.io/crates/zip-forensic)
-[![Docs.rs](https://img.shields.io/docsrs/zip-core?label=docs.rs)](https://docs.rs/zip-core)
+[![Docs.rs](https://img.shields.io/docsrs/zip-full-core?label=docs.rs)](https://docs.rs/zip-full-core)
 [![Rust 1.87+](https://img.shields.io/badge/rust-1.87%2B-blue.svg)](https://www.rust-lang.org)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Sponsor](https://img.shields.io/badge/sponsor-h4x0r-ea4aaa?logo=githubsponsors)](https://github.com/sponsors/h4x0r)
@@ -31,7 +31,7 @@ That's it — point it at a zip and read graded findings. Each is an observation
 
 ## Read entries without the C libraries
 
-`zip-core` parses the container and decodes every common method with **only
+`zip-full-core` parses the container and decodes every common method with **only
 pure-Rust crates** — the three C libraries the popular `zip` crate pulls
 (`bzip2-sys`, `zstd-sys`, `lzma-sys`) are gone:
 
@@ -44,7 +44,7 @@ entry.read_to_end(&mut bytes)?;                 // CRC-32 verified on EOF; fails
 ```
 
 ```console
-$ cargo tree -p zip-core -e normal | grep -- -sys
+$ cargo tree -p zip-full-core -e normal | grep -- -sys
 $            # empty — no C-FFI in the runtime tree
 ```
 
@@ -59,7 +59,7 @@ let mut entry = archive.by_name_decrypt("secret.bin", b"password")?;
 ## Random-access a disk image inside a zip — no extraction
 
 A forensic image stored in a ZIP at ~0% compression is, at the deflate level, a
-run of byte-aligned *stored* blocks. `zip-core` indexes them so any offset is
+run of byte-aligned *stored* blocks. `zip-full-core` indexes them so any offset is
 addressable directly, with no full inflation and no temp spill:
 
 ```rust
@@ -72,7 +72,7 @@ entry.read_at(&mut buf, 1_000_000_003)?;        // positioned read, lock-free, n
 
 ```toml
 [dependencies]
-zip-core = "0.1"        # the reader
+zip-full-core = "0.1"        # the reader
 zip-forensic = "0.1"    # the auditor
 ```
 

@@ -1,6 +1,6 @@
 # Terms of Service
 
-`zip-core` and `zip-forensic` are open-source software licensed under the
+`zip-full-core` and `zip-forensic` are open-source software licensed under the
 Apache License, Version 2.0. Your use is governed by that licence; see the
 `LICENSE` file in the repository for the authoritative text.
 

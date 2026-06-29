@@ -12,7 +12,7 @@ keywords = ["zip", "forensics", "dfir", "anomaly", "tamper"]
 categories = ["filesystem", "parser-implementations"]
 
 [dependencies]
-zip-core = { workspace = true }
+zip-full-core = { workspace = true }
 forensicnomicon = { workspace = true }
 
 [dev-dependencies]

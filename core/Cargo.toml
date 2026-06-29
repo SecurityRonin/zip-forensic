@@ -1,14 +1,14 @@
 [package]
-name = "zip-core"
+name = "zip-full-core"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors = ["Albert Hui <albert@securityronin.com>"]
-description = "Forensic-grade ZIP reader: deflate-block-indexed random access into stored-block entries (E01-in-zip), bomb-safe capped extraction."
+description = "Pure-Rust, no-C-FFI ZIP reader for forensics: decodes Stored, Deflate, Deflate64, Bzip2, Zstd, LZMA and XZ, decrypts ZipCrypto + WinZip AES, with deflate-block random access into E01-in-zip."
 readme = "../README.md"
-keywords = ["zip", "forensics", "dfir", "archive", "decompress"]
+keywords = ["zip", "deflate64", "zstd", "decrypt", "forensics"]
 categories = ["compression", "filesystem", "parser-implementations"]
 
 [lib]

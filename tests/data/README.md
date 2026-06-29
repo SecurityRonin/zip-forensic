@@ -33,7 +33,7 @@ SHA-256 of the plaintext: `26560fa5bc1c428e425955954f88bfdd9e3766238a1d66c5586b3
 - **Why 7z, not zip-rs, for these:** zip-rs cannot write Deflate64/LZMA, and it
   fails to *decode* 7z's method-14 LZMA framing. Bzip2 (12) and Zstd (93) are
   instead validated in-memory against the zip-rs writer/reader oracle (which uses
-  the C libbz2/libzstd) — independent of zip-core's pure-Rust decoders.
+  the C libbz2/libzstd) — independent of zip-full-core's pure-Rust decoders.
 
 ## `structure/` — container-structure fixtures
 
