@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 authors = ["Albert Hui <albert@securityronin.com>"]
 description = "Forensic ZIP anomaly auditor: surfaces central-directory vs local-header disagreements, path-traversal names, and prepended/trailing data as graded forensicnomicon findings."
+readme = "../README.md"
+keywords = ["zip", "forensics", "dfir", "anomaly", "tamper"]
+categories = ["filesystem", "parser-implementations"]
 
 [dependencies]
 zip-core = { workspace = true }

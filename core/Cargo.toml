@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 authors = ["Albert Hui <albert@securityronin.com>"]
 description = "Forensic-grade ZIP reader: deflate-block-indexed random access into stored-block entries (E01-in-zip), bomb-safe capped extraction."
+readme = "../README.md"
+keywords = ["zip", "forensics", "dfir", "archive", "decompress"]
+categories = ["compression", "filesystem", "parser-implementations"]
 
 [lib]
 name = "zip_core"
