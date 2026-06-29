@@ -45,6 +45,13 @@ impl<'a> Reader<'a> {
         let b = self.take(4)?;
         Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     }
+
+    pub(crate) fn u64(&mut self) -> Result<u64, FormatError> {
+        let b = self.take(8)?;
+        Ok(u64::from_le_bytes([
+            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+        ]))
+    }
 }
 
 #[cfg(test)]
@@ -71,5 +78,13 @@ mod tests {
         assert!(r.u32().is_err());
         assert!(r.u16().is_err());
         assert!(r.take(2).is_err());
+        assert!(r.u64().is_err());
+    }
+
+    #[test]
+    fn reads_u64_le() {
+        let data = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let mut r = Reader::new(&data);
+        assert_eq!(r.u64().unwrap(), 0x0807_0605_0403_0201);
     }
 }

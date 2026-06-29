@@ -14,11 +14,21 @@ use crate::{FormatError, ZipCoreError};
 const EOCD_SIG: u32 = 0x0605_4b50;
 const CD_HEADER_SIG: u32 = 0x0201_4b50;
 const LFH_SIG: u32 = 0x0403_4b50;
+const ZIP64_EOCD_SIG: u32 = 0x0606_4b50;
+const ZIP64_LOCATOR_SIG: u32 = 0x0706_4b50;
+/// Header id of the Zip64 extended-information extra field.
+const ZIP64_EXTRA_ID: u16 = 0x0001;
+/// 32-bit sentinel: the real value lives in a Zip64 record/extra field.
+const U32_SENTINEL: u32 = 0xFFFF_FFFF;
+/// 16-bit sentinel for counts.
+const U16_SENTINEL: u16 = 0xFFFF;
 
 /// Minimum EOCD record length (no comment).
 const EOCD_MIN: usize = 22;
 /// Largest region we scan back from EOF for the EOCD (record + max comment).
 const EOCD_SCAN_MAX: usize = EOCD_MIN + u16::MAX as usize;
+/// Zip64 EOCD locator record length.
+const ZIP64_LOCATOR_LEN: usize = 20;
 /// Fixed portion of a local file header.
 const LFH_FIXED: usize = 30;
 /// Ceiling on entries we will parse, guarding against a lying EOCD count.
@@ -184,12 +194,21 @@ fn parse_central_directory<R: Read + Seek>(
     reader.read_exact(&mut tail)?;
 
     let eocd_rel = find_eocd(&tail).ok_or(FormatError::NoEocd)?;
-    let (cd_offset, cd_size, total_entries) = parse_eocd(&tail[eocd_rel..])?;
+    let (cd_off32, cd_size32, total16) = parse_eocd(&tail[eocd_rel..])?;
 
-    if cd_offset == u64::from(u32::MAX) {
-        // Zip64 sentinel: real 64-bit offsets live in the zip64 EOCD record.
-        return Err(FormatError::Zip64Unsupported.into());
-    }
+    // Promote to Zip64 when any base field is a sentinel: the real 64-bit
+    // offset/size/count live in the Zip64 EOCD record reached via its locator.
+    let (cd_offset, cd_size, total_entries) =
+        if cd_off32 == U32_SENTINEL || cd_size32 == U32_SENTINEL || total16 == U16_SENTINEL {
+            resolve_zip64_eocd(reader, &tail, eocd_rel)?
+        } else {
+            (
+                u64::from(cd_off32),
+                u64::from(cd_size32),
+                usize::from(total16),
+            )
+        };
+
     match cd_offset.checked_add(cd_size) {
         Some(end) if end <= file_len => {}
         _ => return Err(FormatError::CentralDirOutOfRange { cd_offset, cd_size }.into()),
@@ -217,8 +236,9 @@ fn find_eocd(tail: &[u8]) -> Option<usize> {
         .find(|&i| tail[i..i + 4] == sig)
 }
 
-/// Parse the fixed EOCD fields. Returns `(cd_offset, cd_size, total_entries)`.
-fn parse_eocd(buf: &[u8]) -> Result<(u64, u64, usize), ZipCoreError> {
+/// Parse the fixed EOCD fields. Returns the raw 32-bit `(cd_offset, cd_size,
+/// total_entries)`; any value may be a sentinel signalling Zip64.
+fn parse_eocd(buf: &[u8]) -> Result<(u32, u32, u16), ZipCoreError> {
     let mut r = Reader::new(buf);
     if r.u32()? != EOCD_SIG {
         return Err(FormatError::NoEocd.into());
@@ -229,11 +249,50 @@ fn parse_eocd(buf: &[u8]) -> Result<(u64, u64, usize), ZipCoreError> {
     let total_entries = r.u16()?;
     let cd_size = r.u32()?;
     let cd_offset = r.u32()?;
-    Ok((
-        u64::from(cd_offset),
-        u64::from(cd_size),
-        usize::from(total_entries),
-    ))
+    Ok((cd_offset, cd_size, total_entries))
+}
+
+/// Resolve the real central-directory location from the Zip64 EOCD record. The
+/// Zip64 EOCD locator sits immediately before the 32-bit EOCD; it points at the
+/// Zip64 EOCD record holding the true 64-bit offset/size/count.
+fn resolve_zip64_eocd<R: Read + Seek>(
+    reader: &mut R,
+    tail: &[u8],
+    eocd_rel: usize,
+) -> Result<(u64, u64, usize), ZipCoreError> {
+    if eocd_rel < ZIP64_LOCATOR_LEN {
+        return Err(FormatError::Zip64Unsupported.into());
+    }
+    let mut loc = Reader::new(&tail[eocd_rel - ZIP64_LOCATOR_LEN..eocd_rel]);
+    if loc.u32()? != ZIP64_LOCATOR_SIG {
+        return Err(FormatError::Zip64Unsupported.into());
+    }
+    let _disk = loc.u32()?;
+    let z64_eocd_offset = loc.u64()?;
+
+    reader.seek(SeekFrom::Start(z64_eocd_offset))?;
+    let mut rec = [0u8; 56];
+    reader.read_exact(&mut rec)?;
+    let mut r = Reader::new(&rec);
+    if r.u32()? != ZIP64_EOCD_SIG {
+        return Err(FormatError::BadSignature {
+            what: "Zip64 EOCD record",
+            offset: z64_eocd_offset,
+        }
+        .into());
+    }
+    let _record_size = r.u64()?;
+    let _version_made_by = r.u16()?;
+    let _version_needed = r.u16()?;
+    let _disk = r.u32()?;
+    let _cd_disk = r.u32()?;
+    let _entries_this_disk = r.u64()?;
+    let total_entries = r.u64()?;
+    let cd_size = r.u64()?;
+    let cd_offset = r.u64()?;
+    let total =
+        usize::try_from(total_entries).map_err(|_| FormatError::TooManyEntries(usize::MAX))?;
+    Ok((cd_offset, cd_size, total))
 }
 
 /// Parse `total_entries` central-directory file headers from `cd`.
@@ -258,19 +317,40 @@ fn parse_cd_entries(cd: &[u8], total_entries: usize) -> Result<Vec<CentralEntry>
         let _mod_time = r.u16()?;
         let _mod_date = r.u16()?;
         let crc32 = r.u32()?;
-        let compressed_size = u64::from(r.u32()?);
-        let uncompressed_size = u64::from(r.u32()?);
+        let compressed_size32 = r.u32()?;
+        let uncompressed_size32 = r.u32()?;
         let name_len = usize::from(r.u16()?);
         let extra_len = usize::from(r.u16()?);
         let comment_len = usize::from(r.u16()?);
         let _disk_start = r.u16()?;
         let _internal_attrs = r.u16()?;
         let _external_attrs = r.u32()?;
-        let lfh_offset = u64::from(r.u32()?);
+        let lfh_offset32 = r.u32()?;
 
         let name_bytes = r.take(name_len)?;
-        let _extra = r.take(extra_len)?;
+        let extra = r.take(extra_len)?;
         let _comment = r.take(comment_len)?;
+
+        // Resolve any 0xFFFFFFFF sentinels from the Zip64 extended-information
+        // extra field (header id 0x0001). Fields appear in a FIXED order and only
+        // when their base field is a sentinel.
+        let mut uncompressed_size = u64::from(uncompressed_size32);
+        let mut compressed_size = u64::from(compressed_size32);
+        let mut lfh_offset = u64::from(lfh_offset32);
+        if uncompressed_size32 == U32_SENTINEL
+            || compressed_size32 == U32_SENTINEL
+            || lfh_offset32 == U32_SENTINEL
+        {
+            apply_zip64_extra(
+                extra,
+                uncompressed_size32 == U32_SENTINEL,
+                compressed_size32 == U32_SENTINEL,
+                lfh_offset32 == U32_SENTINEL,
+                &mut uncompressed_size,
+                &mut compressed_size,
+                &mut lfh_offset,
+            )?;
+        }
 
         // Filename: UTF-8 when GP flag bit 11 is set, else CP437. We accept either
         // as best-effort UTF-8 here; a full CP437 table is a follow-up (it only
@@ -288,6 +368,41 @@ fn parse_cd_entries(cd: &[u8], total_entries: usize) -> Result<Vec<CentralEntry>
         });
     }
     Ok(entries)
+}
+
+/// Override sentinel CD fields from the Zip64 extended-information extra field
+/// (header id 0x0001). The 64-bit fields appear in a fixed order — original size,
+/// compressed size, relative header offset — and ONLY when their base field is a
+/// sentinel. A sentinel with no matching extra field is a malformed Zip64 archive.
+fn apply_zip64_extra(
+    extra: &[u8],
+    need_uncompressed: bool,
+    need_compressed: bool,
+    need_offset: bool,
+    uncompressed_size: &mut u64,
+    compressed_size: &mut u64,
+    lfh_offset: &mut u64,
+) -> Result<(), ZipCoreError> {
+    let mut r = Reader::new(extra);
+    while r.remaining() >= 4 {
+        let id = r.u16()?;
+        let size = usize::from(r.u16()?);
+        if id == ZIP64_EXTRA_ID {
+            let mut z = Reader::new(r.take(size)?);
+            if need_uncompressed {
+                *uncompressed_size = z.u64()?;
+            }
+            if need_compressed {
+                *compressed_size = z.u64()?;
+            }
+            if need_offset {
+                *lfh_offset = z.u64()?;
+            }
+            return Ok(());
+        }
+        r.skip(size)?;
+    }
+    Err(FormatError::Zip64Inconsistent.into())
 }
 
 /// Decode an entry filename. UTF-8 (flag bit 11) is taken verbatim; otherwise we

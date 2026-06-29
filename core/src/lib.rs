@@ -93,6 +93,11 @@ pub enum FormatError {
     #[error("Zip64 archive not yet supported")]
     Zip64Unsupported,
 
+    /// A 0xFFFFFFFF sentinel was present but the Zip64 record/extra field that
+    /// should carry the real value is missing or malformed.
+    #[error("Zip64 sentinel without a matching Zip64 record/extra field")]
+    Zip64Inconsistent,
+
     /// The central directory offset/size fall outside the file.
     #[error("central directory out of range: offset {cd_offset}, size {cd_size}")]
     CentralDirOutOfRange {
