@@ -78,6 +78,101 @@ fn make_stored_block_zip(dir: &Path, name: &str, payload: &[u8]) -> PathBuf {
     path
 }
 
+/// Build a ZIP whose single entry is genuinely Huffman-compressed (level best),
+/// so `open_entry` cannot stored-block-index it and must use the full-decompress
+/// FALLBACK path. Exercises (and pins) that path independently of zip-rs.
+fn make_compressed_zip(dir: &Path, name: &str, payload: &[u8]) -> PathBuf {
+    let mut enc = DeflateEncoder::new(Vec::new(), Compression::best());
+    enc.write_all(payload).unwrap();
+    let deflated = enc.finish().unwrap();
+
+    let crc = crc32(payload);
+    let path = dir.join(name);
+    let mut out = Vec::new();
+    let fname = b"compressed.bin";
+
+    out.extend_from_slice(&[0x50, 0x4b, 0x03, 0x04]);
+    out.extend_from_slice(&20u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&8u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&crc.to_le_bytes());
+    out.extend_from_slice(&(deflated.len() as u32).to_le_bytes());
+    out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    out.extend_from_slice(&(fname.len() as u16).to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    let lfh_start = 0usize;
+    out.extend_from_slice(fname);
+    out.extend_from_slice(&deflated);
+
+    let cd_start = out.len();
+    out.extend_from_slice(&[0x50, 0x4b, 0x01, 0x02]);
+    out.extend_from_slice(&20u16.to_le_bytes());
+    out.extend_from_slice(&20u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&8u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&crc.to_le_bytes());
+    out.extend_from_slice(&(deflated.len() as u32).to_le_bytes());
+    out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    out.extend_from_slice(&(fname.len() as u16).to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&(lfh_start as u32).to_le_bytes());
+    out.extend_from_slice(fname);
+
+    let cd_size = out.len() - cd_start;
+    out.extend_from_slice(&[0x50, 0x4b, 0x05, 0x06]);
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&(cd_size as u32).to_le_bytes());
+    out.extend_from_slice(&(cd_start as u32).to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+
+    std::fs::write(&path, &out).unwrap();
+    path
+}
+
+#[test]
+fn read_at_matches_full_decompress_on_compressed_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    // Compressible payload so flate2 emits Huffman blocks (forces the fallback).
+    let payload: Vec<u8> = (0..80_000u32).map(|i| (i / 53) as u8).collect();
+    let path = make_compressed_zip(dir.path(), "fixture.zip", &payload);
+
+    let entry = zip_core::open_entry(&path, "compressed.bin").unwrap();
+    assert_eq!(entry.len(), payload.len() as u64);
+    assert!(
+        !entry.is_stored_block_indexed(),
+        "best-compression => fallback path"
+    );
+
+    let cases = [
+        (0usize, 16usize),
+        (1, 100),
+        (40_000, 999),
+        (79_990, 50),
+        (0, payload.len()),
+    ];
+    for (off, len) in cases {
+        let mut buf = vec![0u8; len];
+        let n = entry.read_at(&mut buf, off as u64).unwrap();
+        let expected = oracle_read(&path, "compressed.bin", off, len);
+        assert_eq!(
+            &buf[..n],
+            &expected[..],
+            "mismatch at offset={off} len={len}"
+        );
+    }
+}
+
 fn crc32(data: &[u8]) -> u32 {
     // Standard CRC-32 (IEEE), table-free.
     let mut crc = 0xFFFF_FFFFu32;
