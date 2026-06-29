@@ -1,0 +1,45 @@
+[package]
+name = "zip-forensic-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# Standalone workspace: the fuzz crate must not be pulled into the parent
+# (core/forensic) workspace, whose virtual root manifest is not a package.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.zip-core]
+path = "../core"
+
+[dependencies.zip-forensic]
+path = "../forensic"
+
+[[bin]]
+name = "archive"
+path = "fuzz_targets/archive.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "entry_decode"
+path = "fuzz_targets/entry_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "forensic"
+path = "fuzz_targets/forensic.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

@@ -1,0 +1,32 @@
+name: Fuzz
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  fuzz:
+    name: Fuzz targets (nightly)
+    runs-on: ubuntu-latest
+    # cargo-fuzz builds with the host nightly; warnings in its own deps must not
+    # fail the install, so this job does not deny warnings.
+    env:
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@9bdad043e88c75890e36ad3bbc8d27f0090dd609 # v2.7.8
+        with:
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz
+      - name: Build all fuzz targets
+        working-directory: fuzz
+        run: cargo +nightly fuzz check
+      - name: Smoke-fuzz each target (30s)
+        working-directory: fuzz
+        run: |
+          for t in archive entry_decode forensic; do
+            cargo +nightly fuzz run "$t" -- -max_total_time=30 -rss_limit_mb=4096
+          done
