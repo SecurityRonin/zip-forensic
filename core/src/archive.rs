@@ -140,8 +140,35 @@ impl<R: Read + Seek> ZipArchive<R> {
         self.open(meta)
     }
 
+    /// Raw structural view for the forensic analyzer: per entry, the header
+    /// fields as recorded in BOTH the central directory and the local file
+    /// header, plus offsets. This is the seam that lets `zip-forensic` compare
+    /// the two copies (tamper signal) without re-implementing a second parser.
+    pub fn structural_view(&mut self) -> Result<Vec<EntryLayout>, ZipCoreError> {
+        let metas = self.entries.clone();
+        let mut out = Vec::with_capacity(metas.len());
+        for (index, m) in metas.iter().enumerate() {
+            let (local, data_start) = read_lfh_fields(&mut self.reader, m.lfh_offset)?;
+            out.push(EntryLayout {
+                index,
+                lfh_offset: m.lfh_offset,
+                data_start,
+                central: HeaderFields {
+                    name: m.name.clone(),
+                    method: m.method,
+                    flags: m.flags,
+                    crc32: m.crc32,
+                    compressed_size: m.compressed_size,
+                    uncompressed_size: m.uncompressed_size,
+                },
+                local,
+            });
+        }
+        Ok(out)
+    }
+
     fn open(&mut self, meta: CentralEntry) -> Result<ZipFile<'_, R>, ZipCoreError> {
-        let data_start = resolve_data_start(&mut self.reader, &meta)?;
+        let (_local, data_start) = read_lfh_fields(&mut self.reader, meta.lfh_offset)?;
         self.reader.seek(SeekFrom::Start(data_start))?;
         let limited = (&mut self.reader).take(meta.compressed_size);
         let decoder = Decoder::new(meta.method, meta.uncompressed_size, limited)?;
@@ -156,28 +183,85 @@ impl<R: Read + Seek> ZipArchive<R> {
     }
 }
 
-/// Read the local file header at `meta.lfh_offset` and return the absolute offset
-/// of the entry's first data byte (`lfh_offset + 30 + name_len + extra_len`).
-fn resolve_data_start<R: Read + Seek>(
+/// Header fields as recorded in one header copy (central directory OR local file
+/// header). Exposed via [`ZipArchive::structural_view`] for the forensic seam.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeaderFields {
+    /// Entry name (decoded).
+    pub name: String,
+    /// Compression method.
+    pub method: CompressionMethod,
+    /// General-purpose flag bits.
+    pub flags: u16,
+    /// CRC-32 as recorded in this header copy.
+    pub crc32: u32,
+    /// Compressed size as recorded in this header copy.
+    pub compressed_size: u64,
+    /// Uncompressed size as recorded in this header copy.
+    pub uncompressed_size: u64,
+}
+
+/// One entry's raw structural layout: the central-directory and local-file-header
+/// copies of its fields plus offsets, for cross-checking (tamper detection).
+#[derive(Debug, Clone)]
+pub struct EntryLayout {
+    /// Index in central-directory order.
+    pub index: usize,
+    /// Absolute offset of the local file header.
+    pub lfh_offset: u64,
+    /// Absolute offset of the entry's first data byte.
+    pub data_start: u64,
+    /// Fields as recorded in the central directory.
+    pub central: HeaderFields,
+    /// Fields as recorded in the local file header.
+    pub local: HeaderFields,
+}
+
+/// Read and parse the local file header at `lfh_offset`, returning its fields and
+/// the absolute offset of the entry's first data byte
+/// (`lfh_offset + 30 + name_len + extra_len`).
+fn read_lfh_fields<R: Read + Seek>(
     reader: &mut R,
-    meta: &CentralEntry,
-) -> Result<u64, ZipCoreError> {
-    reader.seek(SeekFrom::Start(meta.lfh_offset))?;
+    lfh_offset: u64,
+) -> Result<(HeaderFields, u64), ZipCoreError> {
+    reader.seek(SeekFrom::Start(lfh_offset))?;
     let mut fixed = [0u8; LFH_FIXED];
     reader.read_exact(&mut fixed)?;
     let mut r = Reader::new(&fixed);
     if r.u32()? != LFH_SIG {
         return Err(FormatError::BadSignature {
             what: "local file header",
-            offset: meta.lfh_offset,
+            offset: lfh_offset,
         }
         .into());
     }
-    // version(2) flags(2) method(2) time(2) date(2) crc(4) csize(4) usize(4)
-    r.skip(22)?;
-    let name_len = u64::from(r.u16()?);
-    let extra_len = u64::from(r.u16()?);
-    Ok(meta.lfh_offset + LFH_FIXED as u64 + name_len + extra_len)
+    let _version_needed = r.u16()?;
+    let flags = r.u16()?;
+    let method = CompressionMethod::from_u16(r.u16()?);
+    let _mod_time = r.u16()?;
+    let _mod_date = r.u16()?;
+    let crc32 = r.u32()?;
+    let compressed_size = u64::from(r.u32()?);
+    let uncompressed_size = u64::from(r.u32()?);
+    let name_len = usize::from(r.u16()?);
+    let extra_len = usize::from(r.u16()?);
+
+    let mut name_buf = vec![0u8; name_len];
+    reader.read_exact(&mut name_buf)?;
+    let name = decode_name(&name_buf, flags);
+    let data_start = lfh_offset + LFH_FIXED as u64 + name_len as u64 + extra_len as u64;
+
+    Ok((
+        HeaderFields {
+            name,
+            method,
+            flags,
+            crc32,
+            compressed_size,
+            uncompressed_size,
+        },
+        data_start,
+    ))
 }
 
 /// Locate + parse the EOCD, then read and parse the central directory.

@@ -1,5 +1,5 @@
 [workspace]
-members = ["core"]
+members = ["core", "forensic"]
 resolver = "2"
 
 [workspace.package]
@@ -7,6 +7,11 @@ edition = "2021"
 rust-version = "1.80"
 license = "Apache-2.0"
 repository = "https://github.com/SecurityRonin/zip-forensic"
+
+[workspace.dependencies]
+zip-core = { path = "core", version = "0.1.0" }
+forensicnomicon = "1"
+thiserror = "2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

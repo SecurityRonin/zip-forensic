@@ -1,0 +1,16 @@
+[package]
+name = "zip-forensic"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors = ["Albert Hui <albert@securityronin.com>"]
+description = "Forensic ZIP anomaly auditor: surfaces central-directory vs local-header disagreements, path-traversal names, and prepended/trailing data as graded forensicnomicon findings."
+
+[dependencies]
+zip-core = { workspace = true }
+forensicnomicon = { workspace = true }
+
+[lints]
+workspace = true
