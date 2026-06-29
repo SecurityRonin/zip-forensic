@@ -1,2 +1,5 @@
 target/
 Cargo.lock
+
+# Claude Code session artifacts (worktrees, archived planning, jobs)
+.claude/
