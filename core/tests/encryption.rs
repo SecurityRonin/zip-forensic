@@ -91,3 +91,30 @@ fn zipcrypto_real_xloader_matches_oracle() {
 
     assert_eq!(got, want, "zip-core ZipCrypto decrypt vs zip-rs oracle");
 }
+
+#[test]
+fn by_index_decrypt_works() {
+    let mut ar = ZipArchive::new(Cursor::new(fixture("zipcrypto.zip"))).unwrap();
+    let mut e = ar.by_index_decrypt(0, PW).unwrap();
+    let mut out = Vec::new();
+    e.read_to_end(&mut out).unwrap();
+    assert_eq!(out, payload());
+}
+
+#[test]
+fn decrypt_on_unencrypted_entry_just_reads() {
+    // by_*_decrypt on a non-encrypted entry ignores the password and reads.
+    use zip::write::SimpleFileOptions;
+    use zip::ZipWriter;
+    let mut zw = ZipWriter::new(Cursor::new(Vec::new()));
+    zw.start_file("plain.bin", SimpleFileOptions::default())
+        .unwrap();
+    std::io::Write::write_all(&mut zw, &payload()).unwrap();
+    let bytes = zw.finish().unwrap().into_inner();
+
+    let mut ar = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut e = ar.by_name_decrypt("plain.bin", b"ignored").unwrap();
+    let mut out = Vec::new();
+    e.read_to_end(&mut out).unwrap();
+    assert_eq!(out, payload());
+}

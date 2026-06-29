@@ -16,6 +16,7 @@ mod archive;
 mod bytes;
 mod codec;
 mod cp437;
+mod crypto;
 
 pub use archive::{
     ArchiveSummary, CompressionMethod, EntryLayout, HeaderFields, ZipArchive, ZipFile,

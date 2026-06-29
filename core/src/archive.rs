@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use crate::bytes::Reader;
 use crate::codec::Decoder;
+use crate::crypto::{AesInfo, AesReader, ZipCryptoReader};
 use crate::{FormatError, ZipCoreError};
 
 const EOCD_SIG: u32 = 0x0605_4b50;
@@ -82,6 +83,11 @@ pub(crate) struct CentralEntry {
     pub(crate) compressed_size: u64,
     pub(crate) uncompressed_size: u64,
     pub(crate) lfh_offset: u64,
+    /// DOS mod-time (the ZipCrypto password-check byte when a data descriptor is
+    /// used).
+    pub(crate) last_mod_time: u16,
+    /// WinZip AES parameters when this entry is method-99 encrypted.
+    pub(crate) aes: Option<AesInfo>,
 }
 
 impl CentralEntry {
@@ -171,6 +177,36 @@ impl<R: Read + Seek> ZipArchive<R> {
         self.open(meta)
     }
 
+    /// Open the entry at index `i`, decrypting it with `password` (ZipCrypto or
+    /// WinZip AES). Errors with `WrongPassword` if the password fails the check.
+    pub fn by_index_decrypt(
+        &mut self,
+        i: usize,
+        password: &[u8],
+    ) -> Result<ZipFile<'_>, ZipCoreError> {
+        let meta = self
+            .entries
+            .get(i)
+            .ok_or(ZipCoreError::IndexOutOfBounds(i))?
+            .clone();
+        self.open_decrypt(meta, password)
+    }
+
+    /// Open the named entry, decrypting it with `password`.
+    pub fn by_name_decrypt(
+        &mut self,
+        name: &str,
+        password: &[u8],
+    ) -> Result<ZipFile<'_>, ZipCoreError> {
+        let meta = self
+            .entries
+            .iter()
+            .find(|e| e.name == name)
+            .ok_or_else(|| ZipCoreError::EntryNotFound(name.to_string()))?
+            .clone();
+        self.open_decrypt(meta, password)
+    }
+
     /// Raw structural view for the forensic analyzer: per entry, the header
     /// fields as recorded in BOTH the central directory and the local file
     /// header, plus offsets. This is the seam that lets `zip-forensic` compare
@@ -213,6 +249,47 @@ impl<R: Read + Seek> ZipArchive<R> {
             bytes_out: 0,
             verified: false,
             verify_crc: true,
+            meta,
+        })
+    }
+
+    fn open_decrypt(
+        &mut self,
+        meta: CentralEntry,
+        password: &[u8],
+    ) -> Result<ZipFile<'_>, ZipCoreError> {
+        // Not encrypted -> the password is irrelevant; read normally.
+        if meta.flags & 0x0001 == 0 && meta.aes.is_none() {
+            return self.open(meta);
+        }
+        let (_local, data_start) = read_lfh_fields(&mut self.reader, meta.lfh_offset)?;
+        self.reader.seek(SeekFrom::Start(data_start))?;
+        let take = (&mut self.reader).take(meta.compressed_size);
+        let (reader, method, verify_crc): (Box<dyn Read + '_>, CompressionMethod, bool) =
+            if let Some(aes) = meta.aes {
+                let r = AesReader::new(take, password, aes, meta.compressed_size, &meta.name)?;
+                // AE-2 zeroes the CRC field; its integrity is the HMAC (checked by
+                // AesReader). AE-1 keeps the CRC, so verify it.
+                (
+                    Box::new(r),
+                    CompressionMethod::from_u16(aes.actual_method),
+                    !aes.is_ae2,
+                )
+            } else {
+                // Traditional ZipCrypto: the check byte is the CRC high byte, or the
+                // mod-time high byte when a data descriptor is used (bit 3).
+                let check = zipcrypto_check_byte(meta.flags, meta.crc32, meta.last_mod_time);
+                let r = ZipCryptoReader::new(take, password, check, &meta.name)?;
+                (Box::new(r), meta.method, true)
+            };
+        let decoder = Decoder::new(method, meta.uncompressed_size, reader)?;
+        Ok(ZipFile {
+            data_start,
+            decoder,
+            hasher: crc32fast::Hasher::new(),
+            bytes_out: 0,
+            verified: false,
+            verify_crc,
             meta,
         })
     }
@@ -469,8 +546,9 @@ fn parse_cd_entries(cd: &[u8], total_entries: usize) -> Result<Vec<CentralEntry>
         let _version_made_by = r.u16()?;
         let _version_needed = r.u16()?;
         let flags = r.u16()?;
-        let method = CompressionMethod::from_u16(r.u16()?);
-        let _mod_time = r.u16()?;
+        let method_raw = r.u16()?;
+        let method = CompressionMethod::from_u16(method_raw);
+        let last_mod_time = r.u16()?;
         let _mod_date = r.u16()?;
         let crc32 = r.u32()?;
         let compressed_size32 = r.u32()?;
@@ -512,6 +590,13 @@ fn parse_cd_entries(cd: &[u8], total_entries: usize) -> Result<Vec<CentralEntry>
         // as best-effort UTF-8 here; a full CP437 table is a follow-up (it only
         // affects display of non-ASCII names, not entry location).
         let name = decode_name(name_bytes, flags);
+        // Method 99 = WinZip AES; the AE-x extra field (0x9901) carries the real
+        // method + key strength.
+        let aes = if method_raw == 99 {
+            parse_aes_extra(extra)
+        } else {
+            None
+        };
 
         entries.push(CentralEntry {
             name,
@@ -521,6 +606,8 @@ fn parse_cd_entries(cd: &[u8], total_entries: usize) -> Result<Vec<CentralEntry>
             compressed_size,
             uncompressed_size,
             lfh_offset,
+            last_mod_time,
+            aes,
         });
     }
     Ok(entries)
@@ -561,6 +648,42 @@ fn apply_zip64_extra(
     Err(FormatError::Zip64Inconsistent.into())
 }
 
+/// Parse the WinZip AE-x extra field (header id 0x9901) from an entry's extra
+/// data: version (AE-1/AE-2), vendor "AE", AES strength, and the real method.
+fn parse_aes_extra(extra: &[u8]) -> Option<AesInfo> {
+    let mut r = Reader::new(extra);
+    while r.remaining() >= 4 {
+        let id = r.u16().ok()?;
+        let size = usize::from(r.u16().ok()?);
+        if id == 0x9901 {
+            let data = r.take(size).ok()?;
+            let mut d = Reader::new(data);
+            let version = d.u16().ok()?; // 1 = AE-1, 2 = AE-2
+            let _vendor = d.u16().ok()?; // "AE"
+            let strength = d.take(1).ok()?[0];
+            let actual_method = d.u16().ok()?;
+            return Some(AesInfo {
+                strength,
+                actual_method,
+                is_ae2: version == 2,
+            });
+        }
+        r.skip(size).ok()?;
+    }
+    None
+}
+
+/// The ZipCrypto password-verification byte: the CRC-32 high byte, or the
+/// mod-time high byte when the entry uses a data descriptor (GP flag bit 3),
+/// matching what the encrypter used (PKWARE APPNOTE 6.1.6).
+fn zipcrypto_check_byte(flags: u16, crc32: u32, last_mod_time: u16) -> u8 {
+    if flags & 0x0008 != 0 {
+        (last_mod_time >> 8) as u8
+    } else {
+        (crc32 >> 24) as u8
+    }
+}
+
 /// Decode an entry filename. UTF-8 (flag bit 11) is taken verbatim; otherwise we
 /// map the CP437 high range so non-ASCII names are still legible.
 fn decode_name(bytes: &[u8], flags: u16) -> String {
@@ -580,8 +703,8 @@ pub struct ZipFile<'a> {
     hasher: crc32fast::Hasher,
     bytes_out: u64,
     verified: bool,
-    /// Whether to verify CRC-32 at EOF. False for WinZip AE-2, whose integrity is
-    /// the HMAC (checked by the AES reader) and whose CD CRC field is zero.
+    /// Whether to verify CRC-32 at EOF. False for `WinZip` AE-2, whose integrity
+    /// is the HMAC (checked by the AES reader) and whose CD CRC field is zero.
     verify_crc: bool,
 }
 
@@ -684,5 +807,18 @@ impl Read for ZipFile<'_> {
         self.hasher.update(&buf[..n]);
         self.bytes_out += n as u64;
         Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::zipcrypto_check_byte;
+
+    #[test]
+    fn check_byte_selects_crc_or_modtime() {
+        // No data descriptor (bit 3 clear) -> CRC-32 high byte.
+        assert_eq!(zipcrypto_check_byte(0x0000, 0xAB12_3456, 0x7890), 0xAB);
+        // Data descriptor (bit 3 set) -> mod-time high byte.
+        assert_eq!(zipcrypto_check_byte(0x0008, 0xAB12_3456, 0xCD90), 0xCD);
     }
 }

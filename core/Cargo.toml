@@ -25,6 +25,14 @@ deflate64 = "0.1"        # method 9 — Deflate64 (pure Rust; zip-rs uses the sa
 bzip2-rs = "0.1"         # method 12 — bzip2 decompress-only, pure Rust
 ruzstd = "0.8"           # method 93 — Zstandard decoder, pure Rust
 lzma-rs = "0.3"          # methods 14/95 — LZMA (ZIP wrapper) + XZ, pure Rust
+# Decryption. ZipCrypto is the ZIP format's own legacy cipher (implemented here);
+# WinZip AES uses audited RustCrypto primitives — NEVER hand-rolled (CLAUDE.md).
+aes = "0.8"
+ctr = "0.9"
+hmac = "0.12"
+sha1 = "0.10"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+constant_time_eq = "0.3"
 
 # zip-rs (zip) is retained ONLY as a tier-1 differential ORACLE for tests. It is
 # NOT a normal dependency, so it does not enter zip-core's runtime tree:
