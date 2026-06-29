@@ -157,6 +157,14 @@ impl StoredZipEntry {
         matches!(self.layout, Layout::StoredBlocks(_))
     }
 
+    /// Number of indexed stored blocks (0 for the fallback path).
+    pub fn block_count(&self) -> usize {
+        match &self.layout {
+            Layout::StoredBlocks(b) => b.len(),
+            Layout::Fallback { .. } => 0,
+        }
+    }
+
     /// Read up to `buf.len()` bytes of the **uncompressed** entry starting at
     /// `offset`. Stored-block entries seek directly to the right block(s) with no
     /// inflation; this method takes `&self`, so independent reads run lock-free in

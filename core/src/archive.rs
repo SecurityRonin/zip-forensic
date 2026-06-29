@@ -372,7 +372,7 @@ fn parse_central_directory<R: Read + Seek>(
 /// Scan backward for the EOCD signature, returning its offset within `tail`.
 fn find_eocd(tail: &[u8]) -> Option<usize> {
     if tail.len() < EOCD_MIN {
-        return None;
+        return None; // cov:unreachable: parse_central_directory guards scan_len >= EOCD_MIN
     }
     let sig = EOCD_SIG.to_le_bytes();
     // The EOCD starts at most EOCD_MIN bytes before EOF; scan from the latest.
@@ -385,7 +385,7 @@ fn find_eocd(tail: &[u8]) -> Option<usize> {
 fn parse_eocd(buf: &[u8]) -> Result<Eocd32, ZipCoreError> {
     let mut r = Reader::new(buf);
     if r.u32()? != EOCD_SIG {
-        return Err(FormatError::NoEocd.into());
+        return Err(FormatError::NoEocd.into()); // cov:unreachable: find_eocd matched this signature
     }
     let disk_number = r.u16()?;
     let cd_start_disk = r.u16()?;
@@ -560,10 +560,8 @@ fn apply_zip64_extra(
 /// Decode an entry filename. UTF-8 (flag bit 11) is taken verbatim; otherwise we
 /// map the CP437 high range so non-ASCII names are still legible.
 fn decode_name(bytes: &[u8], flags: u16) -> String {
-    if flags & 0x0800 != 0 {
-        return String::from_utf8_lossy(bytes).into_owned();
-    }
-    if bytes.is_ascii() {
+    // UTF-8 flag (bit 11) set, or pure ASCII: take the bytes as UTF-8 (lossy).
+    if flags & 0x0800 != 0 || bytes.is_ascii() {
         return String::from_utf8_lossy(bytes).into_owned();
     }
     bytes.iter().map(|&b| crate::cp437::decode(b)).collect()

@@ -343,11 +343,7 @@ pub fn audit_reader<R: Read + Seek>(reader: R) -> Result<Vec<Anomaly>, ZipCoreEr
         if let Ok(mut entry) = archive.by_index(i) {
             let mut sink = std::io::sink();
             if let Err(e) = std::io::copy(&mut entry, &mut sink) {
-                if matches!(
-                    e.get_ref()
-                        .and_then(|inner| inner.downcast_ref::<ZipCoreError>()),
-                    Some(ZipCoreError::CrcMismatch { .. })
-                ) {
+                if is_crc_mismatch(&e) {
                     out.push(Anomaly::new(AnomalyKind::CrcMismatch {
                         index: i,
                         name: entry_layout.central.name.clone(),
@@ -357,6 +353,13 @@ pub fn audit_reader<R: Read + Seek>(reader: R) -> Result<Vec<Anomaly>, ZipCoreEr
         }
     }
     Ok(out)
+}
+
+/// Whether an `io::Error` wraps a zip-core CRC-32 mismatch.
+fn is_crc_mismatch(e: &std::io::Error) -> bool {
+    e.get_ref()
+        .and_then(|i| i.downcast_ref::<ZipCoreError>())
+        .is_some_and(|z| matches!(z, ZipCoreError::CrcMismatch { .. }))
 }
 
 /// Container-level audits from the archive summary: trailing data after the EOCD

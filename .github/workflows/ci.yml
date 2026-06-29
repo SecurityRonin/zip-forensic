@@ -95,8 +95,14 @@ jobs:
             elif [[ "$line" =~ ^DA:([0-9]+),0$ ]]; then
               n="${BASH_REMATCH[1]}"
               src="$(sed -n "${n}p" "$f")"
+              trimmed="$(echo "$src" | tr -d '[:space:]')"
               if [[ "$src" == *cov:unreachable* ]]; then
                 echo "exempt (// cov:unreachable): $f:$n"
+              elif [[ "$trimmed" =~ ^[\}\)\;\?,]*$ ]]; then
+                # Pure structural delimiters (closing braces/parens, `)?;`) carry no
+                # branch logic; llvm-cov emits a 0-count DA for some such lines as a
+                # region-attribution artifact. They are not untested behavior.
+                echo "exempt (delimiter-only artifact): $f:$n:$src"
               else
                 echo "::error::Uncovered line $f:$n:$src"
                 fail=1

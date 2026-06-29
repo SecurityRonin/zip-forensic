@@ -12,5 +12,8 @@ description = "Forensic ZIP anomaly auditor: surfaces central-directory vs local
 zip-core = { workspace = true }
 forensicnomicon = { workspace = true }
 
+[dev-dependencies]
+tempfile = "3"
+
 [lints]
 workspace = true

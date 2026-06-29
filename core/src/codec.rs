@@ -47,26 +47,20 @@ impl<'a, R: Read> Decoder<'a, R> {
             }
             CompressionMethod::Bzip2 => {
                 let mut dec = bzip2_rs::DecoderReader::new(input);
-                Ok(Self::Buffered(Cursor::new(read_capped(
-                    &mut dec,
-                    MAX_BUFFERED_DECODE,
-                )?)))
+                let decoded = read_capped(&mut dec, MAX_BUFFERED_DECODE)?;
+                Ok(Self::Buffered(Cursor::new(decoded)))
             }
             CompressionMethod::Zstd => {
                 let mut dec = ruzstd::decoding::StreamingDecoder::new(input)
                     .map_err(|e| io::Error::other(e.to_string()))?;
-                Ok(Self::Buffered(Cursor::new(read_capped(
-                    &mut dec,
-                    MAX_BUFFERED_DECODE,
-                )?)))
+                let decoded = read_capped(&mut dec, MAX_BUFFERED_DECODE)?;
+                Ok(Self::Buffered(Cursor::new(decoded)))
             }
             CompressionMethod::Lzma => {
                 let mut raw = Vec::new();
                 input.read_to_end(&mut raw)?;
-                Ok(Self::Buffered(Cursor::new(decode_zip_lzma(
-                    &raw,
-                    expected_size,
-                )?)))
+                let decoded = decode_zip_lzma(&raw, expected_size)?;
+                Ok(Self::Buffered(Cursor::new(decoded)))
             }
             CompressionMethod::Xz => {
                 let mut raw = Vec::new();
