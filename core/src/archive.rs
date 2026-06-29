@@ -6,6 +6,7 @@
 //! consumers migrate with a near-mechanical `zip::` -> `zip_core::` rename.
 
 use std::io::{self, Read, Seek, SeekFrom};
+use std::path::PathBuf;
 
 use crate::bytes::Reader;
 use crate::codec::Decoder;
@@ -469,6 +470,42 @@ impl<R: Read> ZipFile<'_, R> {
     pub fn is_dir(&self) -> bool {
         self.meta.is_dir()
     }
+
+    /// A safe relative path for extraction, or `None` if the entry name escapes
+    /// the destination (parent-dir traversal, absolute, or drive-letter path).
+    /// The raw [`name`](Self::name) is always preserved as evidence; this is the
+    /// secure-by-default view a caller should join onto an output directory.
+    pub fn enclosed_name(&self) -> Option<PathBuf> {
+        enclosed_name(&self.meta.name)
+    }
+}
+
+/// Compute a traversal-safe relative path from a ZIP entry name, treating both
+/// `/` and `\` as separators (ZIP names may use either) so the check holds on
+/// every platform regardless of `std::path` separator conventions.
+fn enclosed_name(name: &str) -> Option<PathBuf> {
+    if name.is_empty() || name.contains('\0') {
+        return None;
+    }
+    if name.starts_with('/') || name.starts_with('\\') {
+        return None; // absolute / UNC-style
+    }
+    let b = name.as_bytes();
+    if b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic() {
+        return None; // drive-letter prefix (C:\...)
+    }
+    let mut out = PathBuf::new();
+    for comp in name.split(['/', '\\']) {
+        match comp {
+            "" | "." => {}
+            ".." => return None,
+            other => out.push(other),
+        }
+    }
+    if out.as_os_str().is_empty() {
+        return None;
+    }
+    Some(out)
 }
 
 impl<R: Read> Read for ZipFile<'_, R> {
