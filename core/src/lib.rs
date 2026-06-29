@@ -78,6 +78,16 @@ pub enum ZipCoreError {
     #[error("entry index out of bounds: {0}")]
     IndexOutOfBounds(usize),
 
+    /// The entry's data lives on another disk of a spanned/split archive, which
+    /// this reader does not reassemble.
+    #[error("entry {entry} is on disk {disk} of a spanned archive (not supported)")]
+    SpannedArchive {
+        /// The entry.
+        entry: String,
+        /// The disk number holding the entry.
+        disk: u32,
+    },
+
     /// The entry's deflate stream was malformed (e.g. `LEN`/`NLEN` mismatch).
     #[error("malformed deflate stream in entry {entry}: {reason}")]
     Malformed {

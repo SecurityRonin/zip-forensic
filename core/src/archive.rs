@@ -121,6 +121,8 @@ pub(crate) struct CentralEntry {
     pub(crate) last_mod_time: u16,
     /// WinZip AES parameters when this entry is method-99 encrypted.
     pub(crate) aes: Option<AesInfo>,
+    /// Disk number holding this entry's local header (0 = this disk).
+    pub(crate) disk_start: u16,
 }
 
 impl CentralEntry {
@@ -268,6 +270,7 @@ impl<R: Read + Seek> ZipArchive<R> {
     }
 
     fn open(&mut self, meta: CentralEntry) -> Result<ZipFile<'_>, ZipCoreError> {
+        check_local_disk(&meta)?;
         if meta.flags & 0x0001 != 0 {
             return Err(ZipCoreError::EncryptedNoPassword(meta.name.clone()));
         }
@@ -291,6 +294,7 @@ impl<R: Read + Seek> ZipArchive<R> {
         meta: CentralEntry,
         password: &[u8],
     ) -> Result<ZipFile<'_>, ZipCoreError> {
+        check_local_disk(&meta)?;
         // Not encrypted -> the password is irrelevant; read normally.
         if meta.flags & 0x0001 == 0 && meta.aes.is_none() {
             return self.open(meta);
@@ -604,7 +608,7 @@ fn parse_cd_entries(cd: &[u8], total_entries: usize) -> Result<Vec<CentralEntry>
         let name_len = usize::from(r.u16()?);
         let extra_len = usize::from(r.u16()?);
         let comment_len = usize::from(r.u16()?);
-        let _disk_start = r.u16()?;
+        let disk_start = r.u16()?;
         let _internal_attrs = r.u16()?;
         let _external_attrs = r.u32()?;
         let lfh_offset32 = r.u32()?;
@@ -656,6 +660,7 @@ fn parse_cd_entries(cd: &[u8], total_entries: usize) -> Result<Vec<CentralEntry>
             lfh_offset,
             last_mod_time,
             aes,
+            disk_start,
         });
     }
     Ok(entries)
@@ -805,6 +810,19 @@ impl ZipFile<'_> {
     pub fn enclosed_name(&self) -> Option<PathBuf> {
         enclosed_name(&self.meta.name)
     }
+}
+
+/// Fail loud if an entry's data lives on another disk of a spanned archive — we
+/// don't reassemble split volumes, so reading from the current file would return
+/// the wrong bytes.
+fn check_local_disk(meta: &CentralEntry) -> Result<(), ZipCoreError> {
+    if meta.disk_start != 0 {
+        return Err(ZipCoreError::SpannedArchive {
+            entry: meta.name.clone(),
+            disk: u32::from(meta.disk_start),
+        });
+    }
+    Ok(())
 }
 
 /// Compute a traversal-safe relative path from a ZIP entry name, treating both
