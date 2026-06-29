@@ -51,6 +51,24 @@ The two hand-built zip64 fixtures are confirmed valid by an independent oracle:
 `7z e` reproduces the payload byte-for-byte (SHA-256
 `66539d934bf91e18d36aeda8c1de82da94c6a02d9b84a9c8e65e0d1a88072581`).
 
+## `encrypted/` — decryption fixtures (tier-1)
+
+Same 20 000-byte payload as `codecs/` (SHA-256
+`26560fa5bc1c428e425955954f88bfdd9e3766238a1d66c5586b34a3bc64574b`), password
+`Infected123`. Consumed by `core/tests/encryption.rs`.
+
+| File | Encryption | Generator command |
+|------|-----------|-------------------|
+| `zipcrypto.zip` | traditional ZipCrypto | `7z a -tzip -pInfected123 -mem=ZipCrypto zipcrypto.zip file.bin` |
+| `aes256.zip` | WinZip AES-256 (AE-2) | `7z a -tzip -pInfected123 -mem=AES256 aes256.zip file.bin` |
+
+Ground truth confirmed by `7z e -pInfected123` reproducing the payload SHA above.
+AES-128/192 and the fail-loud integrity paths (truncated/corrupted ciphertext,
+wrong password) are covered by `crypto.rs` unit tests. A real-world ZipCrypto
+sample (objective-see XLoader malware, password `infected`) is additionally
+decrypted and cross-checked against the zip-rs oracle via
+`ZIP_CORE_ZIPCRYPTO_ZIP` (bytes compared, never executed).
+
 ## Large real-world artifacts (gitignored, env-gated, tier-1)
 
 These genuine third-party artifacts are NOT committed (multi-GB); they live in the

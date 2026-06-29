@@ -33,6 +33,22 @@ path (`tests/data/README.md` records every generator command and hash):
 | LZMA (14) | 7-Zip `-mm=LZMA` | payload (7z extraction = ground truth) |
 | XZ (95) | Python `lzma` (FORMAT_XZ) in a hand-built method-95 container | payload (7z extraction = ground truth) |
 
+## Decryption (tier-1)
+
+`zip-core` decrypts encrypted entries via `by_index_decrypt`/`by_name_decrypt`
+(plain `by_*` refuses an encrypted entry — secure by default):
+
+| Scheme | Implementation | Validation |
+|--------|----------------|------------|
+| Traditional ZipCrypto | the ZIP format's own legacy cipher, implemented per APPNOTE (decrypt-only) | committed 7z fixture (known payload) + the real objective-see XLoader malware sample cross-checked vs the zip-rs oracle |
+| WinZip AES 128/192/256 (AE-1/AE-2) | audited RustCrypto (`aes`/`ctr`/`hmac`/`sha1`/`pbkdf2`) — no primitive hand-rolled | committed 7z AES-256 fixture + `crypto.rs` unit tests across all strengths |
+
+The password is checked (PBKDF2 verifier for AES; CRC/mod-time check byte for
+ZipCrypto) and, for AES, the HMAC-SHA1 authentication code is verified at EOF —
+tampered or truncated ciphertext fails loud. AE-2 omits the CRC, so its integrity
+rests on the HMAC. Writing/encryption is out of scope: this is a read/decrypt-only
+forensic reader (HANDOFF Executive Summary).
+
 For Bzip2/Zstd the encoder is a *different codebase* (the C library, via zip-rs)
 from the decoder (pure-Rust `bzip2-rs`/`ruzstd`), so a match is genuine
 cross-implementation agreement. zip-rs is deliberately NOT used to cross-check the

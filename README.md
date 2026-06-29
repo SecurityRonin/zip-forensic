@@ -48,6 +48,14 @@ $ cargo tree -p zip-core -e normal | grep -- -sys
 $            # empty — no C-FFI in the runtime tree
 ```
 
+Encrypted entries decrypt with a password — traditional ZipCrypto and WinZip AES
+(128/192/256), the latter on audited RustCrypto with HMAC verification:
+
+```rust
+let mut entry = archive.by_name_decrypt("secret.bin", b"password")?;
+// plain by_name() refuses an encrypted entry — secure by default
+```
+
 ## Random-access a disk image inside a zip — no extraction
 
 A forensic image stored in a ZIP at ~0% compression is, at the deflate level, a
