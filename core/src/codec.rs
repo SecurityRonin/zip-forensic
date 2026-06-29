@@ -8,7 +8,7 @@
 //! buffer — they are rarer and smaller, and the genuinely-huge path is the
 //! zero-copy stored-block `read_at`, not full decode.
 
-use std::io::{self, BufReader, Cursor, Read, Take, Write};
+use std::io::{self, BufReader, Cursor, Read, Write};
 
 use crate::archive::CompressionMethod;
 use crate::{FormatError, ZipCoreError};
@@ -19,23 +19,24 @@ use crate::{FormatError, ZipCoreError};
 /// Stored/Deflate read, not these. Exceeding it fails loud.
 const MAX_BUFFERED_DECODE: u64 = 4 * 1024 * 1024 * 1024;
 
-/// A per-entry decoder over the limited compressed stream.
-pub(crate) enum Decoder<'a, R: Read> {
+/// A per-entry decoder over the (possibly decrypted) compressed stream. Generic
+/// over the input reader `Rd` so a decryption layer can sit underneath it.
+pub(crate) enum Decoder<Rd: Read> {
     /// Method 0: raw passthrough.
-    Stored(Take<&'a mut R>),
+    Stored(Rd),
     /// Method 8: classic DEFLATE via flate2's pure-Rust (`miniz_oxide`) backend.
-    Deflate(flate2::read::DeflateDecoder<Take<&'a mut R>>),
+    Deflate(flate2::read::DeflateDecoder<Rd>),
     /// Method 9: Deflate64 (pure Rust). `::new` wraps the reader in a `BufReader`.
-    Deflate64(deflate64::Deflate64Decoder<BufReader<Take<&'a mut R>>>),
+    Deflate64(deflate64::Deflate64Decoder<BufReader<Rd>>),
     /// Methods 12/14/93/95: decompressed once into a buffer, then served.
     Buffered(Cursor<Vec<u8>>),
 }
 
-impl<'a, R: Read> Decoder<'a, R> {
+impl<Rd: Read> Decoder<Rd> {
     pub(crate) fn new(
         method: CompressionMethod,
         expected_size: u64,
-        mut input: Take<&'a mut R>,
+        mut input: Rd,
     ) -> Result<Self, ZipCoreError> {
         match method {
             CompressionMethod::Stored => Ok(Self::Stored(input)),
@@ -75,7 +76,7 @@ impl<'a, R: Read> Decoder<'a, R> {
     }
 }
 
-impl<R: Read> Read for Decoder<'_, R> {
+impl<Rd: Read> Read for Decoder<Rd> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
             Self::Stored(r) => r.read(buf),

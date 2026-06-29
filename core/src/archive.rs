@@ -151,7 +151,7 @@ impl<R: Read + Seek> ZipArchive<R> {
     }
 
     /// Open the entry at index `i` for decoding (mirrors zip-rs `by_index`).
-    pub fn by_index(&mut self, i: usize) -> Result<ZipFile<'_, R>, ZipCoreError> {
+    pub fn by_index(&mut self, i: usize) -> Result<ZipFile<'_>, ZipCoreError> {
         let meta = self
             .entries
             .get(i)
@@ -161,7 +161,7 @@ impl<R: Read + Seek> ZipArchive<R> {
     }
 
     /// Open the named entry for decoding (mirrors zip-rs `by_name`).
-    pub fn by_name(&mut self, name: &str) -> Result<ZipFile<'_, R>, ZipCoreError> {
+    pub fn by_name(&mut self, name: &str) -> Result<ZipFile<'_>, ZipCoreError> {
         let meta = self
             .entries
             .iter()
@@ -198,18 +198,22 @@ impl<R: Read + Seek> ZipArchive<R> {
         Ok(out)
     }
 
-    fn open(&mut self, meta: CentralEntry) -> Result<ZipFile<'_, R>, ZipCoreError> {
+    fn open(&mut self, meta: CentralEntry) -> Result<ZipFile<'_>, ZipCoreError> {
+        if meta.flags & 0x0001 != 0 {
+            return Err(ZipCoreError::EncryptedNoPassword(meta.name.clone()));
+        }
         let (_local, data_start) = read_lfh_fields(&mut self.reader, meta.lfh_offset)?;
         self.reader.seek(SeekFrom::Start(data_start))?;
-        let limited = (&mut self.reader).take(meta.compressed_size);
+        let limited: Box<dyn Read + '_> = Box::new((&mut self.reader).take(meta.compressed_size));
         let decoder = Decoder::new(meta.method, meta.uncompressed_size, limited)?;
         Ok(ZipFile {
-            meta,
             data_start,
             decoder,
             hasher: crc32fast::Hasher::new(),
             bytes_out: 0,
             verified: false,
+            verify_crc: true,
+            meta,
         })
     }
 }
@@ -569,16 +573,19 @@ fn decode_name(bytes: &[u8], flags: u16) -> String {
 
 /// A decoding reader over one ZIP entry. Implements `Read`, yielding decompressed
 /// bytes and verifying CRC-32 at EOF (fail loud on mismatch).
-pub struct ZipFile<'a, R: Read> {
+pub struct ZipFile<'a> {
     meta: CentralEntry,
     data_start: u64,
-    decoder: Decoder<'a, R>,
+    decoder: Decoder<Box<dyn Read + 'a>>,
     hasher: crc32fast::Hasher,
     bytes_out: u64,
     verified: bool,
+    /// Whether to verify CRC-32 at EOF. False for WinZip AE-2, whose integrity is
+    /// the HMAC (checked by the AES reader) and whose CD CRC field is zero.
+    verify_crc: bool,
 }
 
-impl<R: Read> ZipFile<'_, R> {
+impl ZipFile<'_> {
     /// Entry name (path within the archive).
     pub fn name(&self) -> &str {
         &self.meta.name
@@ -657,14 +664,14 @@ fn enclosed_name(name: &str) -> Option<PathBuf> {
     Some(out)
 }
 
-impl<R: Read> Read for ZipFile<'_, R> {
+impl Read for ZipFile<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let n = self.decoder.read(buf)?;
         if n == 0 {
             if !self.verified {
                 self.verified = true;
                 let actual = self.hasher.clone().finalize();
-                if actual != self.meta.crc32 {
+                if self.verify_crc && actual != self.meta.crc32 {
                     return Err(io::Error::other(ZipCoreError::CrcMismatch {
                         entry: self.meta.name.clone(),
                         expected: self.meta.crc32,

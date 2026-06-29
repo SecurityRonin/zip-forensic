@@ -123,14 +123,17 @@ fn deflate64_decodes_real_securitynik_ctf() {
     let mut ar = ZipArchive::new(file).unwrap();
 
     // Every entry is Deflate64; decode the small JSON fully and CRC-verify it.
-    let json = "SECURITYNIK-WIN-20231116-235706.json";
-    let mut e = ar.by_name(json).unwrap();
-    assert_eq!(e.compression(), CompressionMethod::Deflate64);
-    let mut out = Vec::new();
-    // read_to_end succeeding means CRC-32 matched the CTF author's recorded value
-    // (zip-core fails loud on mismatch), so this is an independent integrity check.
-    e.read_to_end(&mut out).unwrap();
-    assert_eq!(out.len() as u64, e.size(), "decoded length vs CD size");
+    // Scoped so the entry (which borrows `ar`) drops before the next is opened.
+    {
+        let json = "SECURITYNIK-WIN-20231116-235706.json";
+        let mut e = ar.by_name(json).unwrap();
+        assert_eq!(e.compression(), CompressionMethod::Deflate64);
+        let mut out = Vec::new();
+        // read_to_end succeeding means CRC-32 matched the CTF author's recorded
+        // value (zip-core fails loud on mismatch) — an independent integrity check.
+        e.read_to_end(&mut out).unwrap();
+        assert_eq!(out.len() as u64, e.size(), "decoded length vs CD size");
+    }
 
     if std::env::var("ZIP_CORE_REAL_DEFLATE64_FULL").is_ok() {
         let dmp = "SECURITYNIK-WIN-20231116-235706.dmp";

@@ -52,6 +52,23 @@ pub enum ZipCoreError {
         actual: u32,
     },
 
+    /// The entry is encrypted but no password was supplied (use `by_*_decrypt`).
+    #[error("entry is encrypted (password required): {0}")]
+    EncryptedNoPassword(String),
+
+    /// The supplied password failed the entry's verification check.
+    #[error("incorrect password for entry: {0}")]
+    WrongPassword(String),
+
+    /// An encrypted entry uses a scheme/parameters this reader cannot handle.
+    #[error("unsupported encryption for entry {entry}: {reason}")]
+    UnsupportedEncryption {
+        /// The entry.
+        entry: String,
+        /// What was unsupported.
+        reason: String,
+    },
+
     /// No entry with the requested name exists.
     #[error("entry not found: {0}")]
     EntryNotFound(String),

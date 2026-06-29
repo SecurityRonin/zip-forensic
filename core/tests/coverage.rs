@@ -167,13 +167,15 @@ fn decode_err(method: u16, comp: &[u8], uncomp_size: u32) -> bool {
     let bytes = build_zip(method, comp, uncomp_size, 0);
     let mut ar = ZipArchive::new(Cursor::new(bytes)).unwrap();
     // Buffered codecs decode eagerly in `by_index`; streaming ones fail on read.
-    match ar.by_index(0) {
+    // Bind before the tail so the borrowing temporary drops before `ar`.
+    let errored = match ar.by_index(0) {
         Err(_) => true,
         Ok(mut e) => {
             let mut out = Vec::new();
             e.read_to_end(&mut out).is_err()
         }
-    }
+    };
+    errored
 }
 
 #[test]
