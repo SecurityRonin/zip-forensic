@@ -22,12 +22,13 @@ deflate64 = "0.1"        # method 9 — Deflate64 (pure Rust; zip-rs uses the sa
 bzip2-rs = "0.1"         # method 12 — bzip2 decompress-only, pure Rust
 ruzstd = "0.8"           # method 93 — Zstandard decoder, pure Rust
 lzma-rs = "0.3"          # methods 14/95 — LZMA (ZIP wrapper) + XZ, pure Rust
-# zip-rs is still used by the legacy open_entry fallback; it is dropped from normal
-# deps in HANDOFF step 3 once the native decode path covers every method, after
-# which it stays only as a dev-dependency oracle.
-zip = "2"
 
+# zip-rs (zip) is retained ONLY as a tier-1 differential ORACLE for tests. It is
+# NOT a normal dependency, so it does not enter zip-core's runtime tree:
+# `cargo tree -p zip-core -e normal` is free of *-sys. This is the milestone that
+# removes the three C-FFI libs (bzip2-sys/zstd-sys/lzma-sys) from the fleet build.
 [dev-dependencies]
+zip = "2"
 tempfile = "3"
 
 [lints]

@@ -33,10 +33,6 @@ pub enum ZipCoreError {
     #[error("malformed ZIP container: {0}")]
     Format(#[from] FormatError),
 
-    /// The underlying `zip` crate reported an error.
-    #[error("zip error: {0}")]
-    Zip(String),
-
     /// An entry uses a compression method this reader does not (yet) decode.
     #[error("unsupported compression method: {0:?}")]
     UnsupportedMethod(CompressionMethod),
@@ -189,12 +185,11 @@ impl StoredZipEntry {
             }
             Layout::Fallback { path, name } => {
                 // Rare path (genuinely-compressed entry): never hit by 0%-deflate
-                // forensic images. Correct, if O(n) per read.
-                let mut archive = zip::ZipArchive::new(std::fs::File::open(path)?)
-                    .map_err(|e| std::io::Error::other(e.to_string()))?;
-                let mut entry = archive
-                    .by_name(name)
-                    .map_err(|e| std::io::Error::other(e.to_string()))?;
+                // forensic images. Correct, if O(n) per read. Decoded by the native
+                // pure-Rust parser (no zip-rs), CRC-verified on EOF.
+                let mut archive =
+                    ZipArchive::new(std::fs::File::open(path)?).map_err(std::io::Error::other)?;
+                let mut entry = archive.by_name(name).map_err(std::io::Error::other)?;
                 let mut all = Vec::with_capacity(self.uncompressed_size as usize);
                 entry.read_to_end(&mut all)?;
                 let start = offset as usize;
@@ -210,16 +205,13 @@ impl StoredZipEntry {
 /// Open a single entry of a ZIP archive for random access.
 pub fn open_entry(path: &Path, name: &str) -> Result<StoredZipEntry, ZipCoreError> {
     let file = std::fs::File::open(path)?;
-    let mut archive = zip::ZipArchive::new(std::fs::File::open(path)?)
-        .map_err(|e| ZipCoreError::Zip(e.to_string()))?;
-    let entry = archive
-        .by_name(name)
-        .map_err(|e| ZipCoreError::Zip(e.to_string()))?;
+    let mut archive = ZipArchive::new(std::fs::File::open(path)?)?;
+    let entry = archive.by_name(name)?;
     let uncompressed_size = entry.size();
     let compressed_size = entry.compressed_size();
     let data_start = entry.data_start();
-    let is_deflate = entry.compression() == zip::CompressionMethod::Deflated;
-    let is_stored = entry.compression() == zip::CompressionMethod::Stored;
+    let is_deflate = entry.compression() == CompressionMethod::Deflated;
+    let is_stored = entry.compression() == CompressionMethod::Stored;
     drop(entry);
     drop(archive);
 
