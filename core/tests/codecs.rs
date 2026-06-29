@@ -6,7 +6,7 @@
 //! - Deflate64 (9) and LZMA (14) are decoded from fixtures produced by `7z`
 //!   (`tests/data/codecs/*.zip`, see that dir's README), compared to the same
 //!   deterministic payload and to the zip-rs oracle's decode.
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
 
 use std::io::{Cursor, Read, Write};
 use std::path::PathBuf;
@@ -102,4 +102,42 @@ fn xz_decodes_method95_fixture() {
     // truth (payload) confirmed by 7z extraction. See tests/data/README.md.
     let bytes = fixture("xz.zip");
     assert_zip_core_decodes(&bytes, "file.bin", CompressionMethod::Xz, &payload());
+}
+
+/// Tier-1 Deflate64 validation against a REAL third-party artifact: the
+/// SecurityNik "TOTAL RECALL" memory-forensics CTF zip — a ~4 GB Windows memory
+/// dump compressed with Deflate64 (method 9). zip-core's native decode must
+/// reproduce each entry and pass the CRC-32 recorded by the CTF author's tool
+/// (the independent answer key), verified at EOF.
+///
+/// Env-gated: ZIP_CORE_REAL_DEFLATE64_ZIP = path to the zip. The small `.json`
+/// entry is always checked; set ZIP_CORE_REAL_DEFLATE64_FULL=1 to also decode the
+/// multi-GB `.dmp` (slow).
+#[test]
+fn deflate64_decodes_real_securitynik_ctf() {
+    let Ok(zip_path) = std::env::var("ZIP_CORE_REAL_DEFLATE64_ZIP") else {
+        eprintln!("skipping: ZIP_CORE_REAL_DEFLATE64_ZIP not set");
+        return;
+    };
+    let file = std::fs::File::open(&zip_path).unwrap();
+    let mut ar = ZipArchive::new(file).unwrap();
+
+    // Every entry is Deflate64; decode the small JSON fully and CRC-verify it.
+    let json = "SECURITYNIK-WIN-20231116-235706.json";
+    let mut e = ar.by_name(json).unwrap();
+    assert_eq!(e.compression(), CompressionMethod::Deflate64);
+    let mut out = Vec::new();
+    // read_to_end succeeding means CRC-32 matched the CTF author's recorded value
+    // (zip-core fails loud on mismatch), so this is an independent integrity check.
+    e.read_to_end(&mut out).unwrap();
+    assert_eq!(out.len() as u64, e.size(), "decoded length vs CD size");
+
+    if std::env::var("ZIP_CORE_REAL_DEFLATE64_FULL").is_ok() {
+        let dmp = "SECURITYNIK-WIN-20231116-235706.dmp";
+        let mut d = ar.by_name(dmp).unwrap();
+        assert_eq!(d.compression(), CompressionMethod::Deflate64);
+        // Stream to a sink; CRC-32 is verified at EOF.
+        let n = std::io::copy(&mut d, &mut std::io::sink()).unwrap();
+        assert_eq!(n, d.size(), "decoded length vs CD size");
+    }
 }

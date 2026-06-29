@@ -51,8 +51,40 @@ The two hand-built zip64 fixtures are confirmed valid by an independent oracle:
 `7z e` reproduces the payload byte-for-byte (SHA-256
 `66539d934bf91e18d36aeda8c1de82da94c6a02d9b84a9c8e65e0d1a88072581`).
 
-## Large artifacts (gitignored)
+## Large real-world artifacts (gitignored, env-gated, tier-1)
 
-`core/tests/differential.rs` reads a real DFIR-Madness E01-in-zip when
-`ZIP_CORE_REAL_E01_ZIP` points at it. Not committed; document the corpus entry in
+These genuine third-party artifacts are NOT committed (multi-GB); they live in the
+shared issen corpus and the tests read them in place when the env vars point at
+them, skipping cleanly otherwise. Provenance is also in
 `issen/docs/corpus-catalog.md`.
+
+### Deflate — DFIR-Madness "Stolen Szechuan Sauce" `DC01-E01.zip`
+
+- **Source:** James Smith / dfirmadness.com — case page
+  <https://dfirmadness.com/the-stolen-szechuan-sauce/>, direct
+  <https://dfirmadness.com/case001/DC01-E01.zip>.
+- **Contents:** entry `E01-DC01/20200918_0347_CDrive.E01`, 2,524,848,357 bytes
+  uncompressed, normal deflate, CRC-32 `ff0ce1a7`.
+- **Ground truth:** the separately-extracted `.E01` file (byte-exact, same size).
+- **Consumed by:** `core/tests/differential.rs::native_decode_matches_extracted_ground_truth`
+  via `ZIP_CORE_REAL_E01_ZIP` + `ZIP_CORE_REAL_E01_EXTRACTED`
+  (+ `ZIP_CORE_REAL_E01_ENTRY`, defaulted).
+- **Redistribution:** dfirmadness.com terms; not redistributed here (gitignored).
+
+### Deflate64 — SecurityNik "TOTAL RECALL" memory-forensics CTF zip
+
+- **Source:** SecurityNik (Nik Alleyne) memory-forensics challenge.
+- **Contents:** `SECURITYNIK-WIN-20231116-235706.dmp` — 4,293,816,320-byte Windows
+  memory dump, Deflate64 (method 9), CRC-32 `de173b7f`; plus a small `.json`
+  sidecar (Deflate64, CRC-32 `43437618`).
+- **Ground truth:** the CRC-32 recorded by the author's archiver (verified at EOF).
+- **Consumed by:** `core/tests/codecs.rs::deflate64_decodes_real_securitynik_ctf`
+  via `ZIP_CORE_REAL_DEFLATE64_ZIP` (+ `…_FULL=1` for the 4 GiB entry).
+
+### Method-distribution note (why bzip2/lzma/xz use synthetic fixtures)
+
+A scan of ~2,400 real corpus zips found Stored/Deflate everywhere, Deflate64 in a
+few large-file CTF artifacts, and **no** real-world zip using Bzip2/LZMA/XZ. Those
+three methods are therefore validated against independent-tool fixtures (7z /
+Python-lzma) plus the zip-rs C-lib oracle — the best available tier-1 absent any
+real-world occurrence.

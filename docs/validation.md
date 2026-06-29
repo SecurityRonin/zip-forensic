@@ -39,6 +39,43 @@ cross-implementation agreement. zip-rs is deliberately NOT used to cross-check t
 method-14 LZMA fixture — it fails to decode 7z's framing — so the third-party
 fixture plus the known payload is the answer key there.
 
+## Real-world artifacts (tier-1, env-gated)
+
+A scan of ~2,400 real zip files across the local forensic corpora establishes the
+**actual** method distribution and which methods can be validated on genuine
+real-world data versus only on independent-tool fixtures:
+
+| Method | Real-world zips found | Real-data validation |
+|--------|-----------------------|----------------------|
+| Stored / Deflate | thousands (every E01-in-zip, collection, memory dump) | **yes** — see below |
+| Deflate64 (9) | a few real CTF artifacts | **yes** — see below |
+| Bzip2 / LZMA / XZ | **none** (only our own fixtures) | not present in the wild; independent-tool fixtures + the zip-rs C-lib oracle are the appropriate tier-1 |
+| AES / ZipCrypto | a real encrypted-malware sample | out of scope (zip-core does not decrypt) |
+
+This matches the design premise: real forensic zips are overwhelmingly
+Stored/Deflate, with Deflate64 appearing for very large (>4 GiB-window) files.
+
+- **Deflate (real, multi-GB):** the DFIR-Madness "Stolen Szechuan Sauce"
+  `DC01-E01.zip` holds a 2,524,848,357-byte Windows disk E01 as a normal-deflate
+  entry (CRC `ff0ce1a7`). zip-core's native decode is compared **byte-for-byte to
+  the separately-extracted E01** (an independent ground-truth answer key) in a
+  single streaming pass, and its CRC-32 is verified at EOF.
+  Test: `native_decode_matches_extracted_ground_truth`
+  (env `ZIP_CORE_REAL_E01_ZIP` + `ZIP_CORE_REAL_E01_EXTRACTED`).
+  Real-world note: this E01 uses *normal* deflate (Huffman), not level-0 stored
+  blocks, so it exercises the full-decode path; the zero-copy stored-block
+  `read_at` fast path is validated by the synthetic stored-block tests.
+- **Deflate64 (real, 4 GiB):** the SecurityNik "TOTAL RECALL" memory-forensics CTF
+  zip compresses a 4,293,816,320-byte Windows memory dump with Deflate64 (method 9,
+  CRC `de173b7f`). zip-core decodes the entries and the recorded CRC-32 (the CTF
+  author's tool is the independent oracle) is verified at EOF.
+  Test: `deflate64_decodes_real_securitynik_ctf`
+  (env `ZIP_CORE_REAL_DEFLATE64_ZIP`, `…_FULL=1` for the 4 GiB entry).
+
+Per the fleet Test-Data standard these multi-GB artifacts are gitignored and
+env-gated (the tests skip cleanly when the corpus is absent); they are catalogued
+in `issen/docs/corpus-catalog.md`.
+
 ## Container structure — tier 1
 
 - **Zip64**: hand-built fixtures where the central-directory base sizes are
