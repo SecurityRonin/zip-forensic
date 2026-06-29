@@ -220,13 +220,7 @@ pub fn audit_path(path: &Path) -> Result<Vec<Anomaly>, ZipCoreError> {
 
 /// The pure audit over a structural view — the testable heart of the analyzer.
 #[must_use]
-pub fn audit_layout(_layout: &[EntryLayout]) -> Vec<Anomaly> {
-    // RED stub — implemented in the GREEN commit.
-    Vec::new()
-}
-
-#[allow(dead_code)]
-fn audit_layout_impl(layout: &[EntryLayout]) -> Vec<Anomaly> {
+pub fn audit_layout(layout: &[EntryLayout]) -> Vec<Anomaly> {
     let mut out = Vec::new();
 
     // Data prepended before the first member (smallest LFH offset > 0).
