@@ -1,7 +1,7 @@
 //! PKWARE Strong Encryption (GP flag bit 6) and masked/central-directory
 //! encryption (bit 13) are not supported — they must fail loud with
 //! UnsupportedEncryption rather than be mishandled as ZipCrypto.
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
 
 use std::io::Cursor;
 

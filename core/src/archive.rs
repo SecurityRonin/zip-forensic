@@ -295,6 +295,21 @@ impl<R: Read + Seek> ZipArchive<R> {
         if meta.flags & 0x0001 == 0 && meta.aes.is_none() {
             return self.open(meta);
         }
+        // PKWARE Strong Encryption (GP bit 6) and masked/central-directory
+        // encryption (GP bit 13) are unsupported — fail loud rather than misread
+        // the stream as traditional ZipCrypto. Only ZipCrypto + WinZip AES decode.
+        if meta.aes.is_none() && meta.flags & 0x0040 != 0 {
+            return Err(ZipCoreError::UnsupportedEncryption {
+                entry: meta.name,
+                reason: "PKWARE strong encryption (GP flag bit 6)".to_string(),
+            });
+        }
+        if meta.flags & 0x2000 != 0 {
+            return Err(ZipCoreError::UnsupportedEncryption {
+                entry: meta.name,
+                reason: "masked / central-directory encryption (GP flag bit 13)".to_string(),
+            });
+        }
         let (_local, data_start) = read_lfh_fields(&mut self.reader, meta.lfh_offset)?;
         self.reader.seek(SeekFrom::Start(data_start))?;
         let take = (&mut self.reader).take(meta.compressed_size);
