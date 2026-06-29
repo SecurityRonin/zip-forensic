@@ -3,7 +3,7 @@
 [![Crates.io: zip-core](https://img.shields.io/crates/v/zip-core?label=zip-core)](https://crates.io/crates/zip-core)
 [![Crates.io: zip-forensic](https://img.shields.io/crates/v/zip-forensic?label=zip-forensic)](https://crates.io/crates/zip-forensic)
 [![Docs.rs](https://img.shields.io/docsrs/zip-core?label=docs.rs)](https://docs.rs/zip-core)
-[![Rust 1.80+](https://img.shields.io/badge/rust-1.80%2B-blue.svg)](https://www.rust-lang.org)
+[![Rust 1.87+](https://img.shields.io/badge/rust-1.87%2B-blue.svg)](https://www.rust-lang.org)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Sponsor](https://img.shields.io/badge/sponsor-h4x0r-ea4aaa?logo=githubsponsors)](https://github.com/sponsors/h4x0r)
 
