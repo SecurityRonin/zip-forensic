@@ -248,3 +248,33 @@ fn ppmd_codec_is_recognized_and_refused() {
         Err(ZipCoreError::UnsupportedMethod(CompressionMethod::Ppmd))
     ));
 }
+
+// ---- SecureZIP for Mac v14.50.32: PKWARE strong encryption + CD signature ----
+// Real SecureZIP output on a throwaway lorem.txt, signed with a throwaway
+// self-signed cert (CN=org.radare.radare2 — no personal identity). One file
+// exercises both SecureZIP-only paths. Tier-2 (real engine, our scenario).
+
+#[test]
+fn securezip_strong_encryption_is_refused() {
+    let mut ar = ZipArchive::new(Cursor::new(load("securezip-strong-signed.zip"))).unwrap();
+    // GP-flag bit 6 + 0x0017 strong-encryption header, AES-256, certificate-based.
+    assert!(
+        matches!(
+            ar.by_index_decrypt(0, b"whatever"),
+            Err(ZipCoreError::UnsupportedEncryption { .. })
+        ),
+        "PKWARE strong encryption must be refused"
+    );
+}
+
+#[test]
+fn securezip_central_directory_signature_is_detected() {
+    let ar = ZipArchive::new(Cursor::new(load("securezip-strong-signed.zip"))).unwrap();
+    // The archive carries a 0x05054b50 digital-signature record (331 bytes of
+    // signature data) embedded within the EOCD's cd_size span, before the EOCD.
+    assert_eq!(
+        ar.summary().archive_signature_len,
+        Some(331),
+        "the central-directory digital signature must be recognized and its length surfaced"
+    );
+}
