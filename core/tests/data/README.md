@@ -135,17 +135,15 @@ Exposed a real bug: SecureZIP includes the signature record inside the EOCD
 `cd_size` span, which the previous detection (looking at `cd_offset+cd_size`)
 missed — see `realworld_corpus.rs` / `archive_signature.rs`.
 
-## Not represented (no public sample exists)
+## PKWARE strong encryption + CD signature (no *public-corpus* sample)
 
-The PKWARE **central-directory digital signature** record (0x05054b50) and
-**Strong Encryption** are SecureZIP-only features. No sample appears in any
-surveyed public corpus (Apache Commons Compress, Go `archive/zip`, libzip,
-minizip-ng, or the 1392-file `zipdetails` corpus); generating one requires the
-proprietary PKWARE SecureZIP tool. These paths are exercised only by
-self-authored fixtures (`tests/strong_encryption.rs`, `tests/archive_signature.rs`)
-and remain tier-3 until a real artifact can be sourced. Both are
-recognize-/refuse-only paths (no decode step), so correctness rests on the
-spec-defined signatures, not on decoding logic.
+These two SecureZIP-only features appear in **no** surveyed public corpus (Apache
+Commons Compress, Go `archive/zip`, libzip, minizip-ng, or the 1392-file
+`zipdetails` corpus) — only the proprietary PKWARE SecureZIP tool produces them.
+They are therefore covered at **tier-2** by `securezip-strong-signed.zip`, minted
+with SecureZIP for Mac v14.50.32 (see above), plus the synthetic edge-case
+fixtures in `tests/strong_encryption.rs` / `tests/archive_signature.rs`. Both are
+recognize-/refuse-only paths (no decode step).
 
 ## Ground-truth values (from `zipdetails`, independent oracle)
 
