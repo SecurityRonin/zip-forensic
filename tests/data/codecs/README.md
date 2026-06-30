@@ -15,8 +15,12 @@ Consumed by `core/tests/codecs.rs`. Tier = who chose the scenario.
 ## Tier-2 (real encoder, but the payload is ours)
 
 `deflate64.zip` (9), `lzma.zip` (14), `xz.zip` (95): produced by `7z` / Python
-`lzma` from the deterministic payload `(0..20_000).map(|i| (i/64) as u8)` — see
+`lzma` from the deterministic payload `(0..20_000).map( |i| (i/64) as u8)` — see
 `codecs::payload()`. Real encoder bitstream, our chosen scenario.
+
+`bzip2.zip` (12): same synthetic payload, used by `coverage.rs` to exercise the
+`read_at`-at-offset bzip2 fallback path (needs the 20 KB payload the 60-byte
+real-world bzip2 fixture can't provide). Coverage fixture, not a correctness oracle.
 
 ## Real-world, env-gated (tier-1 when run)
 
