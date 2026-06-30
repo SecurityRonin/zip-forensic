@@ -1,11 +1,16 @@
-//! Codec differential tests (tier-1 oracles).
+//! Codec differential tests, labelled by validation tier (who chose the
+//! scenario, not whether the data is "synthetic"):
 //!
-//! - Bzip2 (12) and Zstd (93) are written by zip-rs using the C libbz2/libzstd
-//!   and decoded by zip-core's PURE-RUST `bzip2-rs`/`ruzstd` — an independent
-//!   implementation on each side, with the known payload as ground truth.
-//! - Deflate64 (9) and LZMA (14) are decoded from fixtures produced by `7z`
-//!   (`tests/data/codecs/*.zip`, see that dir's README), compared to the same
-//!   deterministic payload and to the zip-rs oracle's decode.
+//! - **Tier-2** — Bzip2 (12) and Zstd (93): the stream is written *in-process*
+//!   by zip-rs (C libbz2/libzstd) and decoded by zip-core's PURE-RUST
+//!   `bzip2-rs`/`ruzstd` — an independent implementation on each side, with the
+//!   known payload as ground truth. Genuinely cross-checked, but WE choose the
+//!   payload/scenario, so it can miss real-world quirks: tier-2, not tier-1.
+//! - **Tier-1** — Deflate64 (9), LZMA (14), and XZ (95): decoded from fixtures
+//!   produced by the third-party `7z` tool (`tests/data/codecs/*.zip`, see that
+//!   dir's README), plus a real-world Deflate64 CTF sample. The artifact is
+//!   authored by an independent engine and the payload is the documented
+//!   ground truth.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
 
 use std::io::{Cursor, Read, Write};
