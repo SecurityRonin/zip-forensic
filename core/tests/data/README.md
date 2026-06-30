@@ -71,6 +71,36 @@ crate). See `core/tests/realworld_corpus.rs`.
 - **Use case**: `realworld_corpus.rs` confirms enumeration works but every entry
   fails loud (`SpannedArchive`) — we hold only the last segment.
 
+## Go `archive/zip` testdata (BSD-3-Clause)
+
+From the Go standard library test suite
+([golang/go](https://github.com/golang/go/tree/master/src/archive/zip/testdata)),
+the `time-*`/`unix` corpus zips the same content with different engines —
+purpose-built for multi-producer coverage. License: BSD-3-Clause (Go `LICENSE`).
+
+| Committed name | Upstream | Producer | Extra | size | sha256 (short) |
+|---|---|---|---|---|---|
+| `ntfs-7zip.zip`   | `time-7zip.zip`   | 7-Zip   | NTFS 0x000a | 150 | `12e1b7b7…` |
+| `ntfs-winrar.zip` | `time-winrar.zip` | WinRAR  | NTFS 0x000a | 150 | `058b9c05…` |
+| `unixtime-infozip.zip` | `time-infozip.zip` | Info-ZIP | UT 0x5455 | 166 | `0e129eb3…` |
+| `unixtime-infozip-multi.zip` | `unix.zip` | Info-ZIP | UT 0x5455 (4 entries) | 620 | `ae84fe91…` |
+
+## Legacy compression codecs (Apache-2.0)
+
+From Apache Commons Compress; `unzip` extracts both (oracle confirming they are
+genuine streams). Our decoder recognizes the method and refuses to decode.
+
+| Committed name | Upstream | Method | size | sha256 (short) |
+|---|---|---|---|---|
+| `shrunk.zip`   | `SHRUNK.ZIP` | Shrink (1) | 352 | `7403088a…` |
+| `imploded.zip` | `imploding-8Kdict-3trees.zip` | Implode (6) | 4251 | `88d2bf6c…` |
+
+## Third spanned producer (Apache-2.0)
+
+| Committed name | Upstream | Producer | size | sha256 (short) |
+|---|---|---|---|---|
+| `split_zip64.zip` | `COMPRESS-477/.../split_zip_created_by_zip_zip64.zip` | Info-ZIP (zip64) | 69177 | `b647a24b…` |
+
 ## Ground-truth values (from `zipdetails`, independent oracle)
 
 | File | Entry | Field | Value |

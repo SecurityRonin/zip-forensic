@@ -9,7 +9,7 @@
 
 use std::io::Cursor;
 
-use zip_core::{ZipArchive, ZipCoreError};
+use zip_core::{CompressionMethod, ZipArchive, ZipCoreError};
 
 fn load(name: &str) -> Vec<u8> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -120,4 +120,78 @@ fn winrar_split_archive_fails_loud() {
 #[test]
 fn infozip_split_archive_fails_loud() {
     assert_split_fails_loud("split_zip_created_by_zip.zip", 272);
+}
+
+// ---- Additional independent producers for the extra-field parsers ----
+
+#[test]
+fn ntfs_mtime_across_producers_matches_oracle() {
+    // Same instant written by different engines; ground truth = zipdetails NTFS
+    // Mtime (FILETIME ticks). WinZip truncates to 1-second (…40000), 7-Zip and
+    // WinRAR keep 100 ns precision (…48179) — a real producer difference.
+    for (file, want) in [
+        ("ntfs-7zip.zip", 131_539_831_172_448_179_u64),
+        ("ntfs-winrar.zip", 131_539_831_172_448_179),
+    ] {
+        let mut ar = ZipArchive::new(Cursor::new(load(file))).unwrap();
+        let view = ar.structural_view().unwrap();
+        assert_eq!(view[0].extra.ntfs_mtime, Some(want), "{file}");
+    }
+}
+
+#[test]
+fn unix_mtime_across_producers_matches_oracle() {
+    let mut ar = ZipArchive::new(Cursor::new(load("unixtime-infozip.zip"))).unwrap();
+    assert_eq!(
+        ar.structural_view().unwrap()[0].extra.unix_mtime,
+        Some(1_509_509_517),
+        "unixtime-infozip.zip"
+    );
+
+    // Multi-entry Info-ZIP archive; ground truth = zipdetails UT mtime per entry.
+    let mut ar = ZipArchive::new(Cursor::new(load("unixtime-infozip-multi.zip"))).unwrap();
+    let got: Vec<_> = ar
+        .structural_view()
+        .unwrap()
+        .iter()
+        .map(|e| e.extra.unix_mtime)
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            Some(1_323_338_664),
+            Some(1_323_338_690),
+            Some(1_323_338_886),
+            Some(1_323_338_768),
+        ]
+    );
+}
+
+#[test]
+fn zip64_split_archive_fails_loud() {
+    // A third spanned producer: the zip64 variant of a real Info-ZIP split.
+    assert_split_fails_loud("split_zip64.zip", 272);
+}
+
+#[test]
+fn legacy_codecs_are_recognized_and_refused() {
+    // Real archives using legacy methods (Apache Commons Compress). `unzip`
+    // extracts them, confirming they are genuine Shrink/Implode streams; our
+    // decoder recognizes the method by name and refuses to decode rather than
+    // producing wrong bytes.
+    for (file, method) in [
+        ("shrunk.zip", CompressionMethod::Shrunk),
+        ("imploded.zip", CompressionMethod::Imploded),
+    ] {
+        let mut ar = ZipArchive::new(Cursor::new(load(file))).unwrap();
+        let view = ar.structural_view().unwrap();
+        assert_eq!(view[0].central.method, method, "{file}: method recognized");
+        assert!(
+            matches!(
+                ar.by_index(0),
+                Err(ZipCoreError::UnsupportedMethod(m)) if m == method
+            ),
+            "{file}: must fail loud with the named method, not decode wrong bytes"
+        );
+    }
 }
