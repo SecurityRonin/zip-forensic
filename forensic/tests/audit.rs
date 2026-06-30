@@ -2,6 +2,14 @@
 //! views, plus an end-to-end `audit_reader` against a hand-built archive whose
 //! local file header is byte-edited to disagree with the central directory (the
 //! headline CD!=LFH tamper signal).
+//!
+//! TIER: tier-3 by nature — the anomalies exercised here (overlap, bidi/control
+//! names, CD!=LFH and CRC mismatch, prepended/trailing data) are tampering/attack/
+//! polyglot signatures that do NOT occur in benign real corpora, so there is no
+//! third-party known-answer artifact; the rule + spec define correctness and the
+//! fixture specifies behavior. Real-data validation lives in `realworld_audit.rs`:
+//! SPECIFICITY (no false positives on real benign archives) and SENSITIVITY for
+//! NAME-CONTROL against a real libzip file with genuine control-char names (tier-1).
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::io::Cursor;
