@@ -135,6 +135,24 @@ Exposed a real bug: SecureZIP includes the signature record inside the EOCD
 `cd_size` span, which the previous detection (looking at `cd_offset+cd_size`)
 missed — see `realworld_corpus.rs` / `archive_signature.rs`.
 
+## Decryption corpus — libzip regress (BSD-3-Clause)
+
+Third-party-authored encrypted archives with documented passwords + plaintext
+(from libzip's `decrypt-correct-password-*.test`). **Tier-1** for decryption:
+independent artifact AND independent answer key. Each AES file has a `plain`
+entry (`plain\n`) and an `encrypted` entry (`encrypted\n`); ZipCrypto file
+decrypts to `foo\n`.
+
+| Committed name | Upstream | Scheme | Password | size | md5 |
+|---|---|---|---|---|---|
+| `encrypt-aes128.zip` | `regress/data/encrypt-aes128.zip` | WinZip AES-128 (0x9901) | `foofoofoo` | 260 | `dc9e9a80…` |
+| `encrypt-aes192.zip` | `regress/data/encrypt-aes192.zip` | WinZip AES-192 | `foofoofoo` | 316 | `b05abd6b…` |
+| `encrypt-aes256.zip` | `regress/data/encrypt-aes256.zip` | WinZip AES-256 | `foofoofoo` | 320 | `89bdd4d4…` |
+| `encrypt-zipcrypto.zip` | `regress/data/encrypt.zip` | Traditional ZipCrypto | `foo` | 306 | `fb752401…` |
+
+Validated in `realworld_corpus.rs`: correct password → exact plaintext; wrong
+password → `WrongPassword` (never silent garbage).
+
 ## PKWARE strong encryption + CD signature (no *public-corpus* sample)
 
 These two SecureZIP-only features appear in **no** surveyed public corpus (Apache

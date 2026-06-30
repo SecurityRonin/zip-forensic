@@ -278,3 +278,59 @@ fn securezip_central_directory_signature_is_detected() {
         "the central-directory digital signature must be recognized and its length surfaced"
     );
 }
+
+// ---- Decryption (libzip regress corpus, BSD-3) ----
+// Third-party-authored encrypted archives with documented passwords and
+// plaintext (libzip's decrypt-correct-password-*.test). Tier-1: independent
+// artifact + independent answer key.
+
+fn decrypt_to_string(file: &str, idx: usize, password: &[u8]) -> String {
+    use std::io::Read;
+    let mut ar = ZipArchive::new(Cursor::new(load(file))).unwrap();
+    let mut zf = ar.by_index_decrypt(idx, password).unwrap();
+    let mut s = String::new();
+    zf.read_to_string(&mut s).unwrap();
+    s
+}
+
+#[test]
+fn winzip_aes_decrypts_to_known_plaintext() {
+    // Password "foofoofoo"; entry "encrypted" (index 1) -> "encrypted\n".
+    for f in [
+        "encrypt-aes128.zip",
+        "encrypt-aes192.zip",
+        "encrypt-aes256.zip",
+    ] {
+        assert_eq!(decrypt_to_string(f, 1, b"foofoofoo"), "encrypted\n", "{f}");
+        assert_eq!(decrypt_to_string(f, 0, b"foofoofoo"), "plain\n", "{f}");
+    }
+}
+
+#[test]
+fn zipcrypto_decrypts_to_known_plaintext() {
+    // libzip encrypt.zip: traditional ZipCrypto, password "foo" -> "foo\n".
+    assert_eq!(
+        decrypt_to_string("encrypt-zipcrypto.zip", 0, b"foo"),
+        "foo\n"
+    );
+}
+
+#[test]
+fn wrong_password_is_rejected_not_silently_wrong() {
+    let mut ar = ZipArchive::new(Cursor::new(load("encrypt-aes256.zip"))).unwrap();
+    assert!(
+        matches!(
+            ar.by_index_decrypt(1, b"wrongpass"),
+            Err(ZipCoreError::WrongPassword(_))
+        ),
+        "a wrong AES password must be rejected, never return garbage plaintext"
+    );
+    let mut ar = ZipArchive::new(Cursor::new(load("encrypt-zipcrypto.zip"))).unwrap();
+    assert!(
+        matches!(
+            ar.by_index_decrypt(0, b"nope"),
+            Err(ZipCoreError::WrongPassword(_))
+        ),
+        "a wrong ZipCrypto password must be rejected"
+    );
+}
