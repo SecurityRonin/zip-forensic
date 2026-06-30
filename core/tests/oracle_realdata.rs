@@ -1,9 +1,11 @@
-//! Tier-1 validation against archives produced by independent third-party
-//! engines (Info-ZIP `zip`, `7z`), with ground truth derived independently of
-//! our parser (the OS filesystem mtime the engine recorded). These tests mint
-//! real archives at run time and skip cleanly when the tools are absent, so CI
-//! without the binaries stays green while a developer with them gets real
-//! cross-engine coverage.
+//! Tier-2 validation against archives produced by independent third-party
+//! engines (Info-ZIP `zip`, `7z`), with ground truth from an independent oracle
+//! (the OS filesystem mtime the engine recorded). The engine and oracle are
+//! independent, but *we* choose the scenario (trivial inputs, a 64 KiB split),
+//! so this is tier-2, not tier-1 — it can miss real-world quirks we did not
+//! construct. The committed real-world corpus in `realworld_corpus.rs` is the
+//! tier-1 counterpart for the extra-field parsers. These tests mint archives at
+//! run time and skip cleanly when the tools are absent.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::io::Cursor;
