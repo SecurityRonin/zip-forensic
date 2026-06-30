@@ -13,6 +13,8 @@
 use std::io::Cursor;
 use std::path::PathBuf;
 
+use zip_forensic::AnomalyKind;
+
 fn corpus_dir() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../core/tests/data"))
 }
@@ -36,7 +38,12 @@ fn no_false_positive_anomalies_on_benign_real_archives() {
             continue;
         }
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        if name.starts_with("split_") || name == "unicode-comment-libzip.zip" {
+        if name.starts_with("split_")
+            || matches!(
+                name.as_str(),
+                "unicode-comment-libzip.zip" | "prefixed-data.zip" | "trailing-junk.zip"
+            )
+        {
             continue;
         }
         let anoms = audit(&name);
@@ -66,4 +73,35 @@ fn name_control_detected_in_real_libzip_archive() {
         n, 3,
         "expected NAME-CONTROL on the 3 control-char-named entries"
     );
+}
+
+
+fn find_prepended(a: &[zip_forensic::Anomaly]) -> Option<u64> {
+    a.iter().find_map(|x| match x.kind {
+        AnomalyKind::PrependedData { length } => Some(length),
+        _ => None,
+    })
+}
+fn find_trailing(a: &[zip_forensic::Anomaly]) -> Option<u64> {
+    a.iter().find_map(|x| match x.kind {
+        AnomalyKind::TrailingData { length } => Some(length),
+        _ => None,
+    })
+}
+
+#[test]
+fn prefixed_archive_flags_prepended_and_trailing_data() {
+    // Go testdata `test-prefix.zip` (BSD): a 43-byte "prefix" stub precedes the
+    // first local header (like an SFX/polyglot), plus 14 trailing bytes after the
+    // EOCD. Ground truth from independent byte inspection.
+    let anoms = audit("prefixed-data.zip");
+    assert_eq!(find_prepended(&anoms), Some(43), "prepended stub length");
+    assert_eq!(find_trailing(&anoms), Some(14), "trailing junk length");
+}
+
+#[test]
+fn trailing_junk_flags_trailing_data() {
+    // Go testdata `test-trailing-junk.zip` (BSD): 14 bytes after the EOCD.
+    let anoms = audit("trailing-junk.zip");
+    assert_eq!(find_trailing(&anoms), Some(14));
 }
