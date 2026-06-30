@@ -72,8 +72,8 @@ entry.read_at(&mut buf, 1_000_000_003)?;        // positioned read, lock-free, n
 
 ```toml
 [dependencies]
-zip-forensic-core = "0.1"        # the reader
-zip-forensic = "0.1"    # the auditor
+zip-forensic-core = "0.2"        # the reader
+zip-forensic = "0.2"    # the auditor
 ```
 
 ## Safety
