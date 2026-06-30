@@ -101,6 +101,17 @@ genuine streams). Our decoder recognizes the method and refuses to decode.
 |---|---|---|---|---|
 | `split_zip64.zip` | `COMPRESS-477/.../split_zip_created_by_zip_zip64.zip` | Info-ZIP (zip64) | 69177 | `b647a24b…` |
 
+## libzip regress corpus (BSD-3-Clause)
+
+From [nih-at/libzip](https://github.com/nih-at/libzip) `regress/data`. CP437 main
+filenames carrying Info-ZIP Unicode extras; ground truth = zipdetails
+`UnicodeName` / `UnicodeCom`.
+
+| Committed name | Upstream | Extra | size | sha256 (short) |
+|---|---|---|---|---|
+| `unicode-path-libzip.zip`    | `test-cp437-fc-utf-8-filename.zip` | Unicode Path 0x7075    | 236  | `36b99a09…` |
+| `unicode-comment-libzip.zip` | `test-cp437-comment-utf-8.zip`     | Unicode Comment 0x6375 | 2619 | `84d595a9…` |
+
 ## Ground-truth values (from `zipdetails`, independent oracle)
 
 | File | Entry | Field | Value |

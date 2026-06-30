@@ -195,3 +195,31 @@ fn legacy_codecs_are_recognized_and_refused() {
         );
     }
 }
+
+#[test]
+fn libzip_unicode_path_and_comment_match_oracle() {
+    // libzip regress corpus (BSD-3): CP437 main names with Info-ZIP Unicode
+    // extras. Ground truth = zipdetails UnicodeName / UnicodeCom.
+    let mut ar = ZipArchive::new(Cursor::new(load("unicode-path-libzip.zip"))).unwrap();
+    assert_eq!(
+        ar.structural_view().unwrap()[0]
+            .extra
+            .unicode_path
+            .as_deref(),
+        Some("ÄÖÜßäöü"),
+        "0x7075 Unicode Path (libzip)"
+    );
+
+    let mut ar = ZipArchive::new(Cursor::new(load("unicode-comment-libzip.zip"))).unwrap();
+    let with_comment: Vec<_> = ar
+        .structural_view()
+        .unwrap()
+        .into_iter()
+        .filter_map(|e| e.extra.unicode_comment)
+        .collect();
+    assert_eq!(
+        with_comment,
+        vec!["ÄÖÜßäöü".to_string()],
+        "0x6375 Unicode Comment (libzip)"
+    );
+}
