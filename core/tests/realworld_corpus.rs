@@ -270,11 +270,11 @@ fn securezip_strong_encryption_is_refused() {
 #[test]
 fn securezip_central_directory_signature_is_detected() {
     let ar = ZipArchive::new(Cursor::new(load("securezip-strong-signed.zip"))).unwrap();
-    // The archive carries a 0x05054b50 digital-signature record (331 bytes of
+    // The archive carries a 0x05054b50 digital-signature record (346 bytes of
     // signature data) embedded within the EOCD's cd_size span, before the EOCD.
     assert_eq!(
         ar.summary().archive_signature_len,
-        Some(331),
+        Some(346),
         "the central-directory digital signature must be recognized and its length surfaced"
     );
 }
