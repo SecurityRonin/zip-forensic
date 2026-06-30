@@ -223,3 +223,28 @@ fn libzip_unicode_path_and_comment_match_oracle() {
         "0x6375 Unicode Comment (libzip)"
     );
 }
+
+#[test]
+fn winzip_unicode_path_and_comment_together_match_oracle() {
+    // winzip-yu.zip (zipdetails corpus, Artistic-1.0/Perl) carries BOTH a
+    // Unicode Path (0x7075) and a Unicode Comment (0x6375) on one entry — a
+    // third 0x7075 producer and a second 0x6375 producer.
+    let mut ar = ZipArchive::new(Cursor::new(load("unicode-both-winzip.zip"))).unwrap();
+    let e = &ar.structural_view().unwrap()[0];
+    assert_eq!(e.extra.unicode_path.as_deref(), Some("Café.txt"));
+    assert_eq!(e.extra.unicode_comment.as_deref(), Some("Café"));
+}
+
+#[test]
+fn ppmd_codec_is_recognized_and_refused() {
+    // Real WinZip PPMd archive (method 98); recognized by name, refused.
+    let mut ar = ZipArchive::new(Cursor::new(load("ppmd.zip"))).unwrap();
+    assert_eq!(
+        ar.structural_view().unwrap()[0].central.method,
+        CompressionMethod::Ppmd
+    );
+    assert!(matches!(
+        ar.by_index(0),
+        Err(ZipCoreError::UnsupportedMethod(CompressionMethod::Ppmd))
+    ));
+}

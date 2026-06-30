@@ -112,6 +112,29 @@ filenames carrying Info-ZIP Unicode extras; ground truth = zipdetails
 | `unicode-path-libzip.zip`    | `test-cp437-fc-utf-8-filename.zip` | Unicode Path 0x7075    | 236  | `36b99a09…` |
 | `unicode-comment-libzip.zip` | `test-cp437-comment-utf-8.zip`     | Unicode Comment 0x6375 | 2619 | `84d595a9…` |
 
+## zipdetails corpus (Artistic-1.0 / "same terms as Perl")
+
+From [pmqs/zipdetails](https://github.com/pmqs/zipdetails) `t/files` (© Paul
+Marquess, dual-licensed Artistic-1.0 OR GPL-1.0+; redistributed here under the
+Artistic-1.0 option). Real WinZip output.
+
+| Committed name | Upstream | Feature | size | sha256 (short) |
+|---|---|---|---|---|
+| `unicode-both-winzip.zip` | `0003-winzip/yu/winzip-yu.zip` | 0x7075 + 0x6375 on one entry | 438 | `4a273a04…` |
+| `ppmd.zip` | `0003-winzip/el-ppmd/winzip-el-ppmd.zip` | PPMd method (98) | 378 | `19e8a5e2…` |
+
+## Not represented (no public sample exists)
+
+The PKWARE **central-directory digital signature** record (0x05054b50) and
+**Strong Encryption** are SecureZIP-only features. No sample appears in any
+surveyed public corpus (Apache Commons Compress, Go `archive/zip`, libzip,
+minizip-ng, or the 1392-file `zipdetails` corpus); generating one requires the
+proprietary PKWARE SecureZIP tool. These paths are exercised only by
+self-authored fixtures (`tests/strong_encryption.rs`, `tests/archive_signature.rs`)
+and remain tier-3 until a real artifact can be sourced. Both are
+recognize-/refuse-only paths (no decode step), so correctness rests on the
+spec-defined signatures, not on decoding logic.
+
 ## Ground-truth values (from `zipdetails`, independent oracle)
 
 | File | Entry | Field | Value |
