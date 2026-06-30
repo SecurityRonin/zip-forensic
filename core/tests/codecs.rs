@@ -1,16 +1,14 @@
 //! Codec decode tests, labelled by validation tier (who chose the scenario, not
 //! whether the data is "synthetic"):
 //!
-//! - **Tier-1** — Bzip2 (12) and Zstd (93): decoded from real-world,
-//!   third-party-authored archives (libzip's `testbzip2.zip`; a WinZip-produced
-//!   method-93 zstd from the zipdetails corpus) whose ground truth is the
-//!   reference-CLI decode of the raw stream (`bunzip2` / `zstd -d`) — an
-//!   independent oracle we did not author. Also tier-1: a real-world Deflate64
-//!   CTF sample and (env-gated) the real DFIR-Madness E01-in-zip.
-//! - **Tier-2** — Deflate64 (9), LZMA (14), XZ (95): decoded from fixtures the
-//!   third-party `7z`/`lzma` tools produced from a payload WE chose, with that
-//!   payload (7z-verified) as the answer key. Real encoder bitstream, but our
-//!   scenario, so it can miss real-world quirks: tier-2, not tier-1.
+//! All decode tests here are **tier-1** — real-world, third-party-authored
+//! archives whose ground truth is the reference-CLI decode of the raw stream (an
+//! independent oracle we did not author):
+//!   - Bzip2 (12): libzip's `testbzip2.zip` (`bunzip2`).
+//!   - Zstd (93), Deflate64 (9), LZMA (14), XZ (95): WinZip-produced archives
+//!     from the zipdetails corpus (`7zz` / `zstd -d`), each carrying `lorem.txt`.
+//!   - Plus a real-world Deflate64 CTF sample and (env-gated) the real
+//!     DFIR-Madness E01-in-zip.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
 
 use std::io::{Cursor, Read};
@@ -18,10 +16,13 @@ use std::path::PathBuf;
 
 use zip_core::{CompressionMethod, ZipArchive};
 
-/// The payload the tier-2 7z fixtures (`deflate64`/`lzma`/`xz`) were built from.
-/// Must match `tests/data/codecs/README.md`.
-fn payload() -> Vec<u8> {
-    (0..20_000u32).map(|i| (i / 64) as u8).collect()
+/// The 446-byte lorem payload shared by the WinZip method samples (zstd /
+/// deflate64 / lzma / xz), as decoded by the reference CLIs (`7zz` / `zstd -d`).
+fn winzip_lorem() -> &'static [u8] {
+    include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../tests/data/codecs/realworld-winzip-lorem.txt"
+    ))
 }
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -55,43 +56,39 @@ fn bzip2_decodes_real_world_libzip_fixture() {
     );
 }
 
+// Zstd (93), Deflate64 (9), LZMA (14) and XZ (95) are all validated against real
+// WinZip-produced archives from the zipdetails corpus (Artistic-1.0), each
+// carrying the same `lorem.txt`. Ground truth = the `7zz` / `zstd -d` reference
+// decode (independent oracle), committed as `realworld-winzip-lorem.txt`. We do
+// NOT cross-check via zip-rs (it rejects WinZip/7z method-14 LZMA framing) — the
+// third-party artifact + reference-CLI answer key is the tier-1 check.
 #[test]
 fn zstd_decodes_real_world_winzip_fixture() {
-    // WinZip-produced zstd (method 93) from the zipdetails corpus (Artistic-1.0).
-    // Ground truth = `zstd -d` reference decode of the raw frame (independent
-    // oracle), committed as realworld-zstd-winzip.expected (446-byte lorem).
     let bytes = fixture("realworld-zstd-winzip.zip");
-    let expected = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../tests/data/codecs/realworld-zstd-winzip.expected"
-    ));
-    assert_zip_core_decodes(&bytes, "lorem.txt", CompressionMethod::Zstd, expected);
-}
-
-// Deflate64 (9) and LZMA (14) ground truth is the payload the 7z fixtures were
-// built from (verified: 7z extraction reproduces it byte-for-byte). We do NOT
-// cross-check via zip-rs here: zip-rs fails to decode 7z's method-14 LZMA framing
-// ("LZ distance beyond output size"), so the third-party FIXTURE + known payload
-// is the tier-1 answer key, not a same-decoder round-trip.
-#[test]
-fn deflate64_decodes_7z_fixture() {
-    let bytes = fixture("deflate64.zip");
-    assert_zip_core_decodes(&bytes, "file.bin", CompressionMethod::Deflate64, &payload());
+    assert_zip_core_decodes(&bytes, "lorem.txt", CompressionMethod::Zstd, winzip_lorem());
 }
 
 #[test]
-fn lzma_decodes_7z_fixture() {
-    let bytes = fixture("lzma.zip");
-    assert_zip_core_decodes(&bytes, "file.bin", CompressionMethod::Lzma, &payload());
+fn deflate64_decodes_real_world_winzip_fixture() {
+    let bytes = fixture("realworld-deflate64-winzip.zip");
+    assert_zip_core_decodes(
+        &bytes,
+        "lorem.txt",
+        CompressionMethod::Deflate64,
+        winzip_lorem(),
+    );
 }
 
 #[test]
-fn xz_decodes_method95_fixture() {
-    // Method-95 (XZ) is rare in the wild; the fixture's .xz stream was produced by
-    // Python's `lzma` (FORMAT_XZ) and wrapped in a hand-built container. Ground
-    // truth (payload) confirmed by 7z extraction. See tests/data/README.md.
-    let bytes = fixture("xz.zip");
-    assert_zip_core_decodes(&bytes, "file.bin", CompressionMethod::Xz, &payload());
+fn lzma_decodes_real_world_winzip_fixture() {
+    let bytes = fixture("realworld-lzma-winzip.zip");
+    assert_zip_core_decodes(&bytes, "lorem.txt", CompressionMethod::Lzma, winzip_lorem());
+}
+
+#[test]
+fn xz_decodes_real_world_winzip_fixture() {
+    let bytes = fixture("realworld-xz-winzip.zip");
+    assert_zip_core_decodes(&bytes, "lorem.txt", CompressionMethod::Xz, winzip_lorem());
 }
 
 /// Tier-1 Deflate64 validation against a REAL third-party artifact: the
