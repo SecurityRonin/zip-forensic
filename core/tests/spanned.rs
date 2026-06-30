@@ -138,3 +138,15 @@ fn multidisk_eocd_fails_loud_even_with_disk0_entry() {
         "a multi-disk EOCD must fail loud on read even when the entry's disk_start is 0"
     );
 }
+
+#[test]
+fn nonzero_this_disk_alone_fails_loud() {
+    // EOCD records this segment as disk 3 while cd_start_disk is 0 — still a
+    // multi-volume set we can't resolve from one segment.
+    let bytes = zip_multidisk_eocd(3, 0);
+    let mut ar = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    assert!(matches!(
+        ar.by_index(0),
+        Err(ZipCoreError::SpannedArchive { disk: 3, .. })
+    ));
+}

@@ -278,7 +278,7 @@ impl<R: Read + Seek> ZipArchive<R> {
     }
 
     fn open(&mut self, meta: CentralEntry) -> Result<ZipFile<'_>, ZipCoreError> {
-        check_local_disk(&meta)?;
+        check_local_disk(&meta, self.summary.disk_number, self.summary.cd_start_disk)?;
         if meta.flags & 0x0001 != 0 {
             return Err(ZipCoreError::EncryptedNoPassword(meta.name.clone()));
         }
@@ -302,7 +302,7 @@ impl<R: Read + Seek> ZipArchive<R> {
         meta: CentralEntry,
         password: &[u8],
     ) -> Result<ZipFile<'_>, ZipCoreError> {
-        check_local_disk(&meta)?;
+        check_local_disk(&meta, self.summary.disk_number, self.summary.cd_start_disk)?;
         // Not encrypted -> the password is irrelevant; read normally.
         if meta.flags & 0x0001 == 0 && meta.aes.is_none() {
             return self.open(meta);
@@ -941,17 +941,30 @@ impl ZipFile<'_> {
     }
 }
 
-/// Fail loud if an entry's data lives on another disk of a spanned archive — we
-/// don't reassemble split volumes, so reading from the current file would return
-/// the wrong bytes.
-fn check_local_disk(meta: &CentralEntry) -> Result<(), ZipCoreError> {
-    if meta.disk_start != 0 {
-        return Err(ZipCoreError::SpannedArchive {
-            entry: meta.name.clone(),
-            disk: u32::from(meta.disk_start),
-        });
-    }
-    Ok(())
+/// Fail loud if the entry's data is not wholly resolvable from the single
+/// segment we hold — we don't reassemble split volumes, so reading would return
+/// the wrong bytes. An archive is spanned when the EOCD marks the central
+/// directory on a later disk (`this_disk`/`cd_start_disk` != 0) *or* the entry's
+/// own `disk_start` is non-zero. Real Info-ZIP split archives set the former
+/// while leaving data entries on disk 0, so the per-entry check alone misses them.
+fn check_local_disk(
+    meta: &CentralEntry,
+    this_disk: u32,
+    cd_start_disk: u32,
+) -> Result<(), ZipCoreError> {
+    let disk = if meta.disk_start != 0 {
+        u32::from(meta.disk_start)
+    } else if cd_start_disk != 0 {
+        cd_start_disk
+    } else if this_disk != 0 {
+        this_disk
+    } else {
+        return Ok(());
+    };
+    Err(ZipCoreError::SpannedArchive {
+        entry: meta.name.clone(),
+        disk,
+    })
 }
 
 /// Compute a traversal-safe relative path from a ZIP entry name, treating both
