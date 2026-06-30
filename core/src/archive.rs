@@ -523,20 +523,32 @@ fn parse_central_directory<R: Read + Seek>(
     let mut cd = vec![0u8; cd_size as usize];
     reader.read_exact(&mut cd)?;
 
-    // The reader now sits just past the central directory: a CD digital-signature
-    // record (header 0x05054b50) may follow before the EOCD. Recognize it and note
-    // its length (not verified).
+    let (entries, cd_consumed) = parse_cd_entries(&cd, total_entries)?;
+
+    // A CD digital-signature record (header 0x05054b50) sits between the last
+    // central-directory header and the EOCD. Producers disagree on whether its
+    // bytes count toward the EOCD's cd_size: Info-ZIP places it *after* the
+    // cd_size span, while PKWARE SecureZIP includes it *within* cd_size. Detect it
+    // at the point where the headers actually ended, which covers both layouts:
+    // first check the trailing bytes inside the CD buffer, then the bytes that
+    // follow it. The signature is recognized, not verified.
     let archive_signature_len = {
-        let mut hdr = [0u8; 6];
-        match reader.read_exact(&mut hdr) {
-            Ok(()) if hdr[..4] == ARCHIVE_SIG_SIG.to_le_bytes() => {
-                Some(u16::from_le_bytes([hdr[4], hdr[5]]))
+        let sig = ARCHIVE_SIG_SIG.to_le_bytes();
+        let trailing = &cd[cd_consumed..];
+        if trailing.len() >= 6 && trailing[..4] == sig {
+            Some(u16::from_le_bytes([trailing[4], trailing[5]]))
+        } else if trailing.is_empty() {
+            // cd_size covered only the headers; the record (if any) follows the
+            // CD block, where the reader is now positioned.
+            let mut hdr = [0u8; 6];
+            match reader.read_exact(&mut hdr) {
+                Ok(()) if hdr[..4] == sig => Some(u16::from_le_bytes([hdr[4], hdr[5]])),
+                _ => None,
             }
-            _ => None,
+        } else {
+            None
         }
     };
-
-    let entries = parse_cd_entries(&cd, total_entries)?;
     let summary = ArchiveSummary {
         file_len,
         central_dir_offset: cd_offset,
@@ -629,7 +641,13 @@ fn resolve_zip64_eocd<R: Read + Seek>(
 }
 
 /// Parse `total_entries` central-directory file headers from `cd`.
-fn parse_cd_entries(cd: &[u8], total_entries: usize) -> Result<Vec<CentralEntry>, ZipCoreError> {
+/// Parse the central-directory headers, returning the entries and the number of
+/// bytes the headers consumed (so the caller can locate a trailing digital
+/// signature record that some producers place inside the `cd_size` span).
+fn parse_cd_entries(
+    cd: &[u8],
+    total_entries: usize,
+) -> Result<(Vec<CentralEntry>, usize), ZipCoreError> {
     let mut r = Reader::new(cd);
     let mut entries = Vec::new();
     for _ in 0..total_entries {
@@ -712,7 +730,8 @@ fn parse_cd_entries(cd: &[u8], total_entries: usize) -> Result<Vec<CentralEntry>
             extra: parse_extra_fields(extra),
         });
     }
-    Ok(entries)
+    let consumed = cd.len() - r.remaining();
+    Ok((entries, consumed))
 }
 
 /// Override sentinel CD fields from the Zip64 extended-information extra field

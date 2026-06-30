@@ -123,6 +123,18 @@ Artistic-1.0 option). Real WinZip output.
 | `unicode-both-winzip.zip` | `0003-winzip/yu/winzip-yu.zip` | 0x7075 + 0x6375 on one entry | 438 | `4a273a04…` |
 | `ppmd.zip` | `0003-winzip/el-ppmd/winzip-el-ppmd.zip` | PPMd method (98) | 378 | `19e8a5e2…` |
 
+## SecureZIP for Mac v14.50.32 (tier-2)
+
+`securezip-strong-signed.zip` — real SecureZIP for Mac **v14.50.32 (14.500032)**
+output: a throwaway `lorem.txt` with PKWARE **strong encryption** (GP-flag bit 6,
+extra `0x0017`, AES-256, certificate-based) **and** a central-directory **digital
+signature** (`0x05054b50`, 331 bytes), signed with a no-identity self-signed cert
+(`CN=org.radare.radare2`). Tier-2: real engine, our scenario. One file exercises
+both SecureZIP-only paths. md5 `f64fda779edc313f816a03acff3c4957`.
+Exposed a real bug: SecureZIP includes the signature record inside the EOCD
+`cd_size` span, which the previous detection (looking at `cd_offset+cd_size`)
+missed — see `realworld_corpus.rs` / `archive_signature.rs`.
+
 ## Not represented (no public sample exists)
 
 The PKWARE **central-directory digital signature** record (0x05054b50) and

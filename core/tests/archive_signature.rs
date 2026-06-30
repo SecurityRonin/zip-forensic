@@ -82,3 +82,58 @@ fn unsigned_archive_reports_no_signature() {
     let ar = ZipArchive::new(Cursor::new(zip_with_signature(None))).unwrap();
     assert_eq!(ar.summary().archive_signature_len, None);
 }
+
+#[test]
+fn non_signature_trailing_bytes_in_cd_span_report_none() {
+    // Some malformed/padded archives leave bytes between the last CD header and
+    // the EOCD that are counted in cd_size but are NOT a 0x05054b50 record. These
+    // must not be mistaken for a signature.
+    let name = b"f";
+    let data = b"hi";
+    let mut o = Vec::new();
+    o.extend_from_slice(&[0x50, 0x4b, 0x03, 0x04]);
+    o.extend_from_slice(&20u16.to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(&0u32.to_le_bytes());
+    o.extend_from_slice(&0u32.to_le_bytes());
+    o.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    o.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    o.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(name);
+    o.extend_from_slice(data);
+    let cd = o.len();
+    o.extend_from_slice(&[0x50, 0x4b, 0x01, 0x02]);
+    o.extend_from_slice(&20u16.to_le_bytes());
+    o.extend_from_slice(&20u16.to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(&0u32.to_le_bytes());
+    o.extend_from_slice(&0u32.to_le_bytes());
+    o.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    o.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    o.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(&0u32.to_le_bytes());
+    o.extend_from_slice(&0u32.to_le_bytes());
+    o.extend_from_slice(name);
+    // Four junk bytes after the header, counted in cd_size but not a signature.
+    let junk = *b"junk";
+    o.extend_from_slice(&junk);
+    let cd_size = o.len() - cd; // includes the junk
+    o.extend_from_slice(&[0x50, 0x4b, 0x05, 0x06]);
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(&1u16.to_le_bytes());
+    o.extend_from_slice(&1u16.to_le_bytes());
+    o.extend_from_slice(&(cd_size as u32).to_le_bytes());
+    o.extend_from_slice(&(cd as u32).to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+
+    let ar = ZipArchive::new(Cursor::new(o)).unwrap();
+    assert_eq!(ar.summary().archive_signature_len, None);
+}
