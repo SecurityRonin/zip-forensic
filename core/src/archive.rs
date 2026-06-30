@@ -495,11 +495,10 @@ fn parse_central_directory<R: Read + Seek>(
 
     // Promote to Zip64 when any base field is a sentinel: the real 64-bit
     // offset/size/count/disk live in the Zip64 EOCD record reached via its locator.
-    let (cd_offset, cd_size, total_entries, disk_number, cd_start_disk) = if eocd.cd_offset
-        == U32_SENTINEL
+    let is_zip64 = eocd.cd_offset == U32_SENTINEL
         || eocd.cd_size == U32_SENTINEL
-        || eocd.total_entries == U16_SENTINEL
-    {
+        || eocd.total_entries == U16_SENTINEL;
+    let (cd_offset, cd_size, total_entries, disk_number, cd_start_disk) = if is_zip64 {
         resolve_zip64_eocd(reader, &tail, eocd_rel)?
     } else {
         (
@@ -511,7 +510,32 @@ fn parse_central_directory<R: Read + Seek>(
         )
     };
 
-    match cd_offset.checked_add(cd_size) {
+    // Detect data prepended before the archive (SFX stub / polyglot prefix). A
+    // normal central directory ends exactly at the EOCD; if the recorded
+    // `cd_offset` does not point at a CD header but `cd_offset + N` does — where
+    // `N = eocd_pos - (cd_offset + cd_size)` — the file carries an N-byte prefix
+    // and every recorded offset is relative to the archive start, not the file.
+    // The header check disambiguates a real prefix from a digital-signature
+    // record sitting between the CD and EOCD. Not attempted for Zip64, whose
+    // offsets live in a separately-located record.
+    let eocd_pos = scan_start + eocd_rel as u64;
+    let prefix = if is_zip64 {
+        0
+    } else {
+        match eocd_pos.checked_sub(cd_offset.saturating_add(cd_size)) {
+            Some(n)
+                if n > 0
+                    && !cd_header_at(reader, cd_offset)
+                    && cd_header_at(reader, cd_offset + n) =>
+            {
+                n
+            }
+            _ => 0,
+        }
+    };
+    let actual_cd_offset = cd_offset + prefix;
+
+    match actual_cd_offset.checked_add(cd_size) {
         Some(end) if end <= file_len => {}
         _ => return Err(FormatError::CentralDirOutOfRange { cd_offset, cd_size }.into()),
     }
@@ -519,11 +543,18 @@ fn parse_central_directory<R: Read + Seek>(
         return Err(FormatError::TooManyEntries(total_entries).into());
     }
 
-    reader.seek(SeekFrom::Start(cd_offset))?;
+    reader.seek(SeekFrom::Start(actual_cd_offset))?;
     let mut cd = vec![0u8; cd_size as usize];
     reader.read_exact(&mut cd)?;
 
-    let (entries, cd_consumed) = parse_cd_entries(&cd, total_entries)?;
+    let (mut entries, cd_consumed) = parse_cd_entries(&cd, total_entries)?;
+    // Recorded LFH offsets are relative to the archive start; make them absolute
+    // by shifting past any detected prefix so reads land at the right bytes.
+    if prefix > 0 {
+        for e in &mut entries {
+            e.lfh_offset += prefix;
+        }
+    }
 
     // A CD digital-signature record (header 0x05054b50) sits between the last
     // central-directory header and the EOCD. Producers disagree on whether its
@@ -551,7 +582,7 @@ fn parse_central_directory<R: Read + Seek>(
     };
     let summary = ArchiveSummary {
         file_len,
-        central_dir_offset: cd_offset,
+        central_dir_offset: actual_cd_offset,
         central_dir_size: cd_size,
         eocd_end_offset,
         comment_len: eocd.comment_len,
@@ -560,6 +591,19 @@ fn parse_central_directory<R: Read + Seek>(
         archive_signature_len,
     };
     Ok((entries, summary))
+}
+
+/// Whether a central-directory file header signature sits at absolute `offset`.
+/// Used to disambiguate a prepended-data prefix from other inter-record bytes.
+fn cd_header_at<R: Read + Seek>(reader: &mut R, offset: u64) -> bool {
+    if reader.seek(SeekFrom::Start(offset)).is_err() {
+        return false; // cov:unreachable: Cursor/File seek to a u64 offset does not fail
+    }
+    let mut sig = [0u8; 4];
+    match reader.read_exact(&mut sig) {
+        Ok(()) => u32::from_le_bytes(sig) == CD_HEADER_SIG,
+        Err(_) => false, // cov:unreachable: the sole caller only passes offsets < file_len (n>0 ⇒ in-bounds)
+    }
 }
 
 /// Scan backward for the EOCD signature, returning its offset within `tail`.

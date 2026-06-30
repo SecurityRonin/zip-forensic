@@ -75,7 +75,6 @@ fn name_control_detected_in_real_libzip_archive() {
     );
 }
 
-
 fn find_prepended(a: &[zip_forensic::Anomaly]) -> Option<u64> {
     a.iter().find_map(|x| match x.kind {
         AnomalyKind::PrependedData { length } => Some(length),
