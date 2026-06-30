@@ -40,6 +40,37 @@ crate). See `core/tests/realworld_corpus.rs`.
 - **Use case**: `realworld_corpus.rs` cross-checks the parsed `ntfs_mtime` for
   each entry against the `zipdetails` central-directory ground truth.
 
+## `utf8-winzip-test.zip`
+
+- **Source**: [Apache Commons Compress](https://github.com/apache/commons-compress)
+  test suite, `src/test/resources/utf8-winzip-test.zip` (created with WinZip).
+- **md5**: `f19a5a9e4ea9db862c0b092062dc5bb1`
+- **sha256**: `fd5aeb74f430739a93b21f107237f74f31de5a59c66729dab68281f47ed1ec61`
+- **size**: 569 bytes
+- **License / redistribution**: Apache License 2.0 (the project's `LICENSE.txt`).
+- **Contents**: three entries. Two store a non-ASCII name in CP437 in the main
+  filename field (`€`→`0x80`, `Ö`→`0x99`) plus an Info-ZIP Unicode Path extra
+  (`0x7075`, version + name-CRC + UTF-8) carrying the true name; one is ASCII.
+- **Use case**: `realworld_corpus.rs` cross-checks the parsed `unicode_path`
+  against the `zipdetails` "UnicodeName" for each entry.
+
+## `split_zip_created_by_winrar.zip` / `split_zip_created_by_zip.zip`
+
+- **Source**: Apache Commons Compress,
+  `src/test/resources/COMPRESS-477/split_zip_created_by_{winrar,zip}/…` — the
+  **final segment** of a multi-volume archive created by WinRAR and Info-ZIP
+  respectively (the `.z01`/`.z02` data segments are not needed: the test proves
+  we refuse without them).
+- **md5**: `04e122a559eebcc17d0a45fa0c58c61b` / `0230669293d8d6083e488250febe84d7`
+- **sha256**: `ea2d067a99a38f10288b2eed4543337719a41b0e6b8585a87f8728e5e317410a` /
+  `fb86d35f40656889434d6e69b1055d11dfb44d3d68555a74891f187e6dc3333c`
+- **size**: 50536 / 57763 bytes
+- **License / redistribution**: Apache License 2.0.
+- **Contents**: central directory + EOCD marking the CD on disk 2
+  (`disk_number` / `cd_start_disk` == 2); 279 and 272 entries respectively.
+- **Use case**: `realworld_corpus.rs` confirms enumeration works but every entry
+  fails loud (`SpannedArchive`) — we hold only the last segment.
+
 ## Ground-truth values (from `zipdetails`, independent oracle)
 
 | File | Entry | Field | Value |
@@ -48,3 +79,7 @@ crate). See `core/tests/realworld_corpus.rs`.
 | `unicode.zip`  | `a/grün.png` | UT mtime   | `1268678259` |
 | `unicode2.zip` | `a/`         | NTFS mtime | `130262190704904878` |
 | `unicode2.zip` | `a/grün.png` | NTFS mtime | `129131482600000000` |
+| `utf8-winzip-test.zip` | #1 | Unicode Path (0x7075) | `€_for_Dollar.txt` |
+| `utf8-winzip-test.zip` | #2 | Unicode Path (0x7075) | `Ölfässer.txt` |
+| `split_zip_created_by_winrar.zip` | (all 279) | read | `SpannedArchive` |
+| `split_zip_created_by_zip.zip`    | (all 272) | read | `SpannedArchive` |

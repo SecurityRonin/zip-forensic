@@ -1,14 +1,15 @@
 //! Tier-1 validation: real-world, third-party-authored ZIP archives parsed and
 //! cross-checked against an independent oracle (`zipdetails`). The archives were
-//! authored by the python-libarchive-c maintainers (CC0 1.0) — see
-//! `tests/data/README.md` for provenance, hashes, and the oracle-derived
+//! authored by the python-libarchive-c maintainers (CC0 1.0) and by the Apache
+//! Commons Compress project (Apache-2.0, created with WinZip / WinRAR / Info-ZIP)
+//! — see `tests/data/README.md` for provenance, hashes, and the oracle-derived
 //! ground-truth values asserted below. These are committed fixtures, so the
 //! check runs everywhere with no external tool or network dependency.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::io::Cursor;
 
-use zip_core::ZipArchive;
+use zip_core::{ZipArchive, ZipCoreError};
 
 fn load(name: &str) -> Vec<u8> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -69,4 +70,54 @@ fn unicode2_zip_ntfs_filetimes_match_oracle() {
         );
         assert_eq!(e.extra.unix_mtime, None);
     }
+}
+
+#[test]
+fn winzip_unicode_path_extra_matches_oracle() {
+    // utf8-winzip-test.zip stores each non-ASCII name in CP437 in the main field
+    // plus an Info-ZIP Unicode Path extra (0x7075) with the true UTF-8 name.
+    // Ground truth: zipdetails "UnicodeName" per central header.
+    let mut ar = ZipArchive::new(Cursor::new(load("utf8-winzip-test.zip"))).unwrap();
+    let view = ar.structural_view().unwrap();
+    let expected = [
+        Some("€_for_Dollar.txt"),
+        Some("Ölfässer.txt"),
+        None, // ascii.txt carries no Unicode Path extra
+    ];
+    assert_eq!(view.len(), expected.len(), "entry count");
+    for (e, want) in view.iter().zip(expected) {
+        assert_eq!(
+            e.extra.unicode_path.as_deref(),
+            want,
+            "0x7075 Unicode Path must match the zipdetails oracle"
+        );
+    }
+}
+
+/// Real multi-segment split archives created by independent tools. We hold only
+/// the last segment (central directory + EOCD), so enumeration works but every
+/// data read must fail loud — never read wrong bytes from the wrong segment.
+/// Ground truth from zipdetails: both mark the CD on disk 2 (`disk_number` /
+/// `cd_start_disk` == 2).
+fn assert_split_fails_loud(file: &str, entries: usize) {
+    let mut ar = ZipArchive::new(Cursor::new(load(file))).unwrap();
+    assert_eq!(ar.len(), entries, "{file}: entry count");
+    assert_eq!(ar.summary().disk_number, 2, "{file}: EOCD this-disk");
+    assert_eq!(ar.summary().cd_start_disk, 2, "{file}: EOCD cd-start-disk");
+    for i in 0..ar.len() {
+        assert!(
+            matches!(ar.by_index(i), Err(ZipCoreError::SpannedArchive { .. })),
+            "{file}: entry {i} must fail loud (spanned), not read wrong bytes"
+        );
+    }
+}
+
+#[test]
+fn winrar_split_archive_fails_loud() {
+    assert_split_fails_loud("split_zip_created_by_winrar.zip", 279);
+}
+
+#[test]
+fn infozip_split_archive_fails_loud() {
+    assert_split_fails_loud("split_zip_created_by_zip.zip", 272);
 }
