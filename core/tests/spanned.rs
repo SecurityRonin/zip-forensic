@@ -72,3 +72,69 @@ fn single_disk_entry_still_reads() {
     let mut ar = ZipArchive::new(Cursor::new(bytes)).unwrap();
     assert!(ar.by_index(0).is_ok());
 }
+
+/// Single-entry zip whose EOCD declares the central directory lives on a later
+/// disk (`cd_start_disk`/`this_disk` != 0) while the entry's own `disk_start` is
+/// 0. This is what real Info-ZIP split archives look like on the last segment:
+/// the data entries record disk 0, but the volume is multi-disk. Reading any
+/// entry from this single segment cannot resolve the right bytes.
+fn zip_multidisk_eocd(this_disk: u16, cd_start_disk: u16) -> Vec<u8> {
+    let name = b"f";
+    let data = b"data";
+    let mut o = Vec::new();
+    o.extend_from_slice(&[0x50, 0x4b, 0x03, 0x04]);
+    o.extend_from_slice(&20u16.to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(&0u32.to_le_bytes());
+    o.extend_from_slice(&0u32.to_le_bytes());
+    o.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    o.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    o.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(name);
+    o.extend_from_slice(data);
+    let cd = o.len();
+    o.extend_from_slice(&[0x50, 0x4b, 0x01, 0x02]);
+    o.extend_from_slice(&20u16.to_le_bytes());
+    o.extend_from_slice(&20u16.to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o.extend_from_slice(&0u32.to_le_bytes());
+    o.extend_from_slice(&0u32.to_le_bytes());
+    o.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    o.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    o.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes()); // extra len
+    o.extend_from_slice(&0u16.to_le_bytes()); // comment len
+    o.extend_from_slice(&0u16.to_le_bytes()); // disk number start == 0 (on disk 0)
+    o.extend_from_slice(&0u16.to_le_bytes()); // internal attrs
+    o.extend_from_slice(&0u32.to_le_bytes()); // external attrs
+    o.extend_from_slice(&0u32.to_le_bytes()); // lfh offset
+    o.extend_from_slice(name);
+    let cd_size = o.len() - cd;
+    o.extend_from_slice(&[0x50, 0x4b, 0x05, 0x06]);
+    o.extend_from_slice(&this_disk.to_le_bytes()); // number of this disk
+    o.extend_from_slice(&cd_start_disk.to_le_bytes()); // disk with start of CD
+    o.extend_from_slice(&1u16.to_le_bytes());
+    o.extend_from_slice(&1u16.to_le_bytes());
+    o.extend_from_slice(&(cd_size as u32).to_le_bytes());
+    o.extend_from_slice(&(cd as u32).to_le_bytes());
+    o.extend_from_slice(&0u16.to_le_bytes());
+    o
+}
+
+#[test]
+fn multidisk_eocd_fails_loud_even_with_disk0_entry() {
+    // EOCD says CD is on disk 2 of a 2+-disk set; the entry records disk 0.
+    // The single segment we hold cannot resolve the data, so reads must fail
+    // loud — never silently return bytes from the wrong offset.
+    let bytes = zip_multidisk_eocd(2, 2);
+    let mut ar = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    // Enumeration still works: the central directory is wholly present.
+    assert_eq!(ar.len(), 1);
+    assert!(
+        matches!(ar.by_index(0), Err(ZipCoreError::SpannedArchive { .. })),
+        "a multi-disk EOCD must fail loud on read even when the entry's disk_start is 0"
+    );
+}
