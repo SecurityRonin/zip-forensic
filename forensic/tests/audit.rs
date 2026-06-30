@@ -7,7 +7,7 @@
 use std::io::Cursor;
 
 use forensicnomicon::report::{Category, Observation, Severity};
-use zip_core::{ArchiveSummary, CompressionMethod, EntryLayout, HeaderFields};
+use zip_core::{ArchiveSummary, CompressionMethod, EntryLayout, ExtraFields, HeaderFields};
 use zip_forensic::{audit_container, audit_layout, audit_reader, AnomalyKind};
 
 fn hf(name: &str) -> HeaderFields {
@@ -28,6 +28,7 @@ fn layout(central: HeaderFields, local: HeaderFields) -> Vec<EntryLayout> {
         data_start: 100,
         central,
         local,
+        extra: ExtraFields::default(),
     }]
 }
 
@@ -118,6 +119,7 @@ fn two_entry_layout(
             data_start: a_start,
             central: a.clone(),
             local: a,
+            extra: ExtraFields::default(),
         },
         EntryLayout {
             index: 1,
@@ -125,6 +127,7 @@ fn two_entry_layout(
             data_start: b_start,
             central: b.clone(),
             local: b,
+            extra: ExtraFields::default(),
         },
     ]
 }
@@ -164,6 +167,7 @@ fn summary(file_len: u64, eocd_end: u64, disk: u32, cd_disk: u32) -> ArchiveSumm
         comment_len: 0,
         disk_number: disk,
         cd_start_disk: cd_disk,
+        archive_signature_len: None,
     }
 }
 

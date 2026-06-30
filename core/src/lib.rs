@@ -19,7 +19,7 @@ mod cp437;
 mod crypto;
 
 pub use archive::{
-    ArchiveSummary, CompressionMethod, EntryLayout, HeaderFields, ZipArchive, ZipFile,
+    ArchiveSummary, CompressionMethod, EntryLayout, ExtraFields, HeaderFields, ZipArchive, ZipFile,
 };
 
 use std::io::Read;

@@ -110,3 +110,64 @@ fn no_extras_is_all_none() {
     assert_eq!(e.unicode_path, None);
     assert_eq!(e.unicode_comment, None);
 }
+
+#[test]
+fn parses_unicode_comment_and_all_unix_times() {
+    // Unix extended timestamp with mtime+atime+ctime (flags 0x07).
+    let mut uxt = vec![0x07u8];
+    uxt.extend_from_slice(&111i32.to_le_bytes());
+    uxt.extend_from_slice(&222i32.to_le_bytes());
+    uxt.extend_from_slice(&333i32.to_le_bytes());
+
+    // Unicode comment (0x6375): version(1) + crc(4) + UTF-8.
+    let mut uc = vec![1u8];
+    uc.extend_from_slice(&0u32.to_le_bytes());
+    uc.extend_from_slice("héllo comment".as_bytes());
+
+    let mut extra = Vec::new();
+    extra.extend_from_slice(&extra_record(0x5455, &uxt));
+    extra.extend_from_slice(&extra_record(0x6375, &uc));
+
+    let mut ar = ZipArchive::new(Cursor::new(zip_with_cd_extra(b"f", &extra))).unwrap();
+    let e = &ar.structural_view().unwrap()[0].extra;
+    assert_eq!(e.unix_mtime, Some(111));
+    assert_eq!(e.unix_atime, Some(222));
+    assert_eq!(e.unix_ctime, Some(333));
+    assert_eq!(e.unicode_comment.as_deref(), Some("héllo comment"));
+}
+
+#[test]
+fn malformed_extras_are_ignored_not_fatal() {
+    // A record whose declared size overruns the block: parsing stops cleanly.
+    let mut extra = Vec::new();
+    extra.extend_from_slice(&0x000au16.to_le_bytes());
+    extra.extend_from_slice(&0xFFFFu16.to_le_bytes()); // size way past the data
+    extra.extend_from_slice(&[0u8; 2]);
+    let mut ar = ZipArchive::new(Cursor::new(zip_with_cd_extra(b"f", &extra))).unwrap();
+    assert_eq!(
+        ar.structural_view().unwrap()[0].extra,
+        zip_core::ExtraFields::default()
+    );
+
+    // NTFS with an oversized inner subfield: ignored.
+    let mut ntfs = Vec::new();
+    ntfs.extend_from_slice(&0u32.to_le_bytes()); // reserved
+    ntfs.extend_from_slice(&0x0001u16.to_le_bytes());
+    ntfs.extend_from_slice(&0x00FFu16.to_le_bytes()); // claims 255 bytes
+    ntfs.extend_from_slice(&[0u8; 4]); // but only 4 present
+    let mut ar = ZipArchive::new(Cursor::new(zip_with_cd_extra(
+        b"f",
+        &extra_record(0x000a, &ntfs),
+    )))
+    .unwrap();
+    assert_eq!(ar.structural_view().unwrap()[0].extra.ntfs_mtime, None);
+
+    // Short unicode-path record (< 5 bytes) and empty unix-ts: both yield nothing.
+    let mut extra2 = Vec::new();
+    extra2.extend_from_slice(&extra_record(0x7075, &[1, 2, 3]));
+    extra2.extend_from_slice(&extra_record(0x5455, &[]));
+    let mut ar = ZipArchive::new(Cursor::new(zip_with_cd_extra(b"f", &extra2))).unwrap();
+    let e = &ar.structural_view().unwrap()[0].extra;
+    assert_eq!(e.unicode_path, None);
+    assert_eq!(e.unix_mtime, None);
+}

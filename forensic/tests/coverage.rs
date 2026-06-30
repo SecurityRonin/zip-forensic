@@ -5,7 +5,7 @@
 use std::io::Write;
 
 use forensicnomicon::report::{Observation, Source};
-use zip_core::{CompressionMethod, EntryLayout, HeaderFields};
+use zip_core::{CompressionMethod, EntryLayout, ExtraFields, HeaderFields};
 use zip_forensic::{audit_layout, Anomaly, AnomalyKind};
 
 fn hdr(name: &str, method: CompressionMethod, crc: u32, csize: u64, usize_: u64) -> HeaderFields {
@@ -30,6 +30,7 @@ fn cd_lfh_name_method_and_size_mismatches() {
         data_start: 100,
         central,
         local,
+        extra: ExtraFields::default(),
     }];
     let fields: Vec<_> = audit_layout(&layout)
         .into_iter()
@@ -52,6 +53,7 @@ fn bidi_isolates_and_marks_are_detected() {
             data_start: 0,
             central: hdr(name, CompressionMethod::Stored, 0, 0, 0),
             local: hdr(name, CompressionMethod::Stored, 0, 0, 0),
+            extra: ExtraFields::default(),
         }];
         assert!(
             audit_layout(&l).iter().any(|a| a.code == "ZIP-NAME-BIDI"),

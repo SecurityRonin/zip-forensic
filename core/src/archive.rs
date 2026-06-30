@@ -125,6 +125,8 @@ pub(crate) struct CentralEntry {
     pub(crate) aes: Option<AesInfo>,
     /// Disk number holding this entry's local header (0 = this disk).
     pub(crate) disk_start: u16,
+    /// Parsed common extra fields.
+    pub(crate) extra: ExtraFields,
 }
 
 impl CentralEntry {
@@ -269,6 +271,7 @@ impl<R: Read + Seek> ZipArchive<R> {
                     uncompressed_size: m.uncompressed_size,
                 },
                 local,
+                extra: m.extra.clone(),
             });
         }
         Ok(out)
@@ -384,6 +387,32 @@ pub struct EntryLayout {
     pub central: HeaderFields,
     /// Fields as recorded in the local file header.
     pub local: HeaderFields,
+    /// Parsed common extra fields from the central-directory header.
+    pub extra: ExtraFields,
+}
+
+/// Parsed common ZIP extra fields (central-directory copy). Unset fields are
+/// `None`. Timestamps are surfaced verbatim: NTFS times are Windows FILETIME
+/// (100 ns ticks since 1601-01-01 UTC); Unix times are signed seconds since the
+/// epoch.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExtraFields {
+    /// NTFS last-modified time (FILETIME), extra id 0x000a.
+    pub ntfs_mtime: Option<u64>,
+    /// NTFS last-access time (FILETIME).
+    pub ntfs_atime: Option<u64>,
+    /// NTFS creation time (FILETIME).
+    pub ntfs_ctime: Option<u64>,
+    /// Unix modified time (seconds), Info-ZIP extended timestamp id 0x5455.
+    pub unix_mtime: Option<i32>,
+    /// Unix access time (seconds).
+    pub unix_atime: Option<i32>,
+    /// Unix creation time (seconds).
+    pub unix_ctime: Option<i32>,
+    /// Info-ZIP Unicode path override (id 0x7075), UTF-8.
+    pub unicode_path: Option<String>,
+    /// Info-ZIP Unicode comment override (id 0x6375), UTF-8.
+    pub unicode_comment: Option<String>,
 }
 
 /// Read and parse the local file header at `lfh_offset`, returning its fields and
@@ -680,6 +709,7 @@ fn parse_cd_entries(cd: &[u8], total_entries: usize) -> Result<Vec<CentralEntry>
             last_mod_time,
             aes,
             disk_start,
+            extra: parse_extra_fields(extra),
         });
     }
     Ok(entries)
@@ -743,6 +773,86 @@ fn parse_aes_extra(extra: &[u8]) -> Option<AesInfo> {
         r.skip(size).ok()?;
     }
     None
+}
+
+/// Parse the common ZIP extra fields from an entry's extra block.
+fn parse_extra_fields(extra: &[u8]) -> ExtraFields {
+    let mut out = ExtraFields::default();
+    let mut r = Reader::new(extra);
+    while r.remaining() >= 4 {
+        let (Ok(id), Ok(size)) = (r.u16(), r.u16()) else {
+            break; // cov:unreachable: the >= 4 guard guarantees two u16 reads succeed
+        };
+        let Ok(data) = r.take(usize::from(size)) else {
+            break;
+        };
+        match id {
+            0x000a => parse_ntfs_times(data, &mut out),
+            0x5455 => parse_unix_times(data, &mut out),
+            0x7075 => out.unicode_path = parse_unicode_extra(data),
+            0x6375 => out.unicode_comment = parse_unicode_extra(data),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// NTFS extra field (0x000a): reserved(4) then tagged attributes; tag 0x0001
+/// carries mtime/atime/ctime as 8-byte FILETIMEs.
+fn parse_ntfs_times(data: &[u8], out: &mut ExtraFields) {
+    let mut r = Reader::new(data);
+    let _ = r.u32(); // reserved
+    while r.remaining() >= 4 {
+        let (Ok(tag), Ok(tsize)) = (r.u16(), r.u16()) else {
+            break; // cov:unreachable: the >= 4 guard guarantees two u16 reads succeed
+        };
+        let Ok(tdata) = r.take(usize::from(tsize)) else {
+            break;
+        };
+        if tag == 0x0001 {
+            let mut s = Reader::new(tdata);
+            if let (Ok(m), Ok(a), Ok(c)) = (s.u64(), s.u64(), s.u64()) {
+                out.ntfs_mtime = Some(m);
+                out.ntfs_atime = Some(a);
+                out.ntfs_ctime = Some(c);
+            }
+        }
+    }
+}
+
+/// Info-ZIP extended timestamp (0x5455): a flags byte then present mtime/atime/
+/// ctime as signed 32-bit seconds, in that order.
+fn parse_unix_times(data: &[u8], out: &mut ExtraFields) {
+    let mut r = Reader::new(data);
+    let Ok(flag_byte) = r.take(1) else {
+        return;
+    };
+    let flags = flag_byte[0];
+    if flags & 0x01 != 0 {
+        out.unix_mtime = take_i32le(&mut r);
+    }
+    if flags & 0x02 != 0 {
+        out.unix_atime = take_i32le(&mut r);
+    }
+    if flags & 0x04 != 0 {
+        out.unix_ctime = take_i32le(&mut r);
+    }
+}
+
+fn take_i32le(r: &mut Reader) -> Option<i32> {
+    r.take(4)
+        .ok()
+        .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+}
+
+/// Info-ZIP Unicode path/comment (0x7075 / 0x6375): version(1) + name-CRC(4) +
+/// UTF-8 bytes. Returns the UTF-8 string (the CRC linking it to the legacy name
+/// is not re-checked here).
+fn parse_unicode_extra(data: &[u8]) -> Option<String> {
+    if data.len() < 5 {
+        return None;
+    }
+    String::from_utf8(data[5..].to_vec()).ok()
 }
 
 /// The ZipCrypto password-verification byte: the CRC-32 high byte, or the
