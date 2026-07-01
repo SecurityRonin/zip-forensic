@@ -6,3 +6,12 @@ Cargo.lock
 
 # MkDocs build output
 site/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
