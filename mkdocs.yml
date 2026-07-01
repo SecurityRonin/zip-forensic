@@ -42,7 +42,6 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Validation: validation.md
-  - Fleet migration: migration.md
   - Decisions:
       - Overview: decisions/index.md
       - 0001 Pure-Rust, no C-FFI: decisions/0001-pure-rust-zip-reader-no-c-ffi.md

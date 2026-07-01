@@ -41,4 +41,5 @@ rather than guessing:
 - The fleet writes zips in several crates, so replacing zip-rs is a **split
   migration**: read consumers move to `zip-forensic-core`; write consumers keep a
   feature-slimmed zip-rs (`default-features = false, features = ["deflate"]`).
-  Tracked in `../migration.md`.
+  The fleet execution plan lives in the issen workspace
+  (`docs/plans/2026-07-01-drop-cffi-zip-fleet-migration.md`).

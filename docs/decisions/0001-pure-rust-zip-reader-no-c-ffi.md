@@ -36,5 +36,6 @@ name is decoupled from the package: `[lib] name = "zip_core"`, so imports stay
   taken on crates.io; an interim `zip-full-core` was rejected as overstating
   coverage). The `zip_core` lib name keeps all call sites stable.
 - Consumers that *write* zips are not served by a read-only reader, which forces
-  a split fleet migration — see [ADR 0002](0002-read-decrypt-only-recognize-and-refuse.md)
-  and `../migration.md`.
+  a split fleet migration — see [ADR 0002](0002-read-decrypt-only-recognize-and-refuse.md).
+  The fleet execution plan lives in the issen workspace
+  (`docs/plans/2026-07-01-drop-cffi-zip-fleet-migration.md`).
