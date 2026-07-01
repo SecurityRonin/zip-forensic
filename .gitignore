@@ -3,3 +3,6 @@ Cargo.lock
 
 # Claude Code session artifacts (worktrees, archived planning, jobs)
 .claude/
+
+# MkDocs build output
+site/

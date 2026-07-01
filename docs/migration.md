@@ -2,9 +2,11 @@
 
 This page records the verified plan to move the SecurityRonin fleet off the
 third-party `zip` crate (zip-rs) and its three C-FFI libraries (`bzip2-sys`,
-`zstd-sys`, `lzma-sys`). The migration runs **after** `zip-forensic-core` / `zip-forensic`
-are published to crates.io, and it touches several repositories — it is executed
-as one wave, not from this repo.
+`zstd-sys`, `lzma-sys`). It touches several repositories and is executed as one
+wave, not from this repo.
+
+Status: **unblocked, not yet started.** The precondition — `zip-forensic-core`
+and `zip-forensic` published to crates.io — is met as of 0.2.0 (2026-07-01).
 
 ## Key correction to the original plan
 

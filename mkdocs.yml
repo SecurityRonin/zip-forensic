@@ -43,6 +43,11 @@ nav:
   - Home: index.md
   - Validation: validation.md
   - Fleet migration: migration.md
+  - Decisions:
+      - Overview: decisions/index.md
+      - 0001 Pure-Rust, no C-FFI: decisions/0001-pure-rust-zip-reader-no-c-ffi.md
+      - 0002 Read/decrypt-only: decisions/0002-read-decrypt-only-recognize-and-refuse.md
+      - 0003 Tiered validation: decisions/0003-tiered-validation-real-corpora.md
   - Privacy Policy: privacy.md
   - Terms of Service: terms.md
 
