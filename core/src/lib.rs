@@ -17,10 +17,15 @@ mod bytes;
 mod codec;
 mod cp437;
 mod crypto;
+#[cfg(feature = "vfs")]
+mod vfs;
 
 pub use archive::{
     ArchiveSummary, CompressionMethod, EntryLayout, ExtraFields, HeaderFields, ZipArchive, ZipFile,
 };
+
+#[cfg(feature = "vfs")]
+pub use vfs::ZipVfs;
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
