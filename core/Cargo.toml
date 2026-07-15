@@ -14,6 +14,13 @@ categories = ["compression", "filesystem", "parser-implementations"]
 [lib]
 name = "zip_core"
 
+[features]
+default = []
+# Adapt `ZipArchive` to the forensic-vfs `FileSystem` trait (see `src/vfs.rs`) so
+# a ZIP archive's file tree composes as `Arc<dyn FileSystem>` in the forensic-vfs
+# engine, like the AD1 / DAR adapters.
+vfs = ["dep:forensic-vfs"]
+
 [dependencies]
 # Pure-Rust DEFLATE (miniz_oxide backend). The default zlib/zlib-ng backend pulls
 # C, so the rust_backend feature is mandatory for the no-*-sys goal.
@@ -33,6 +40,10 @@ hmac = "0.12"
 sha1 = "0.10"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 constant_time_eq = "0.3"
+# forensic-vfs (KNOWLEDGE leaf) — the read-only FileSystem navigation contract.
+# Optional so the bare reader stays dependency-light; the `vfs` feature turns on
+# the adapter (src/vfs.rs), mirroring the AD1 / DAR crates.
+forensic-vfs = { version = "0.1", optional = true }
 
 # zip-rs (zip) is retained ONLY as a tier-1 differential ORACLE for tests. It is
 # NOT a normal dependency, so it does not enter zip-core's runtime tree:
