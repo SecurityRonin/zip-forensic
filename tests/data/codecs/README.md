@@ -22,6 +22,25 @@ Consumed by `core/tests/codecs.rs`. Tier = who chose the scenario.
 `read_at`-at-offset bzip2 fallback path (needs the 20 KB payload the 60-byte
 real-world bzip2 fixture can't provide). Coverage fixture, not a correctness oracle.
 
+`seek-deflate64.zip` (9): a genuinely-compressed Deflate64 member exercising the
+checkpoint-indexed **seek** path (`core/src/deflate64_seek.rs`). Deterministic,
+independently-reconstructed content (the test rebuilds the exact bytes), so the
+seek oracle is ground truth, not self-consistency. Generated on the host with:
+
+```sh
+python3 -c "
+with open('bigfile.txt','wb') as f:
+    for i in range(4096):
+        f.write(('%08d the quick brown fox jumps over the lazy dog - lorem ipsum dolor sit amet consectetur\n' % i).encode('ascii'))
+"
+7zz a -tzip -mm=Deflate64 -mx=9 seek-deflate64.zip bigfile.txt
+```
+
+- `bigfile.txt`: 385024 bytes, sha256
+  `718d8d970d7e01420f932e53161e25d8c59ef056f73a9014b70d57f52a19ddef`
+- entry `bigfile.txt`: method 9 (Deflate64), 385024 → 8605 compressed
+- 7zz version: p7zip/7-Zip (Homebrew `7zz`), `-mm=Deflate64 -mx=9`
+
 ## Real-world, env-gated (tier-1 when run)
 
 The SecurityNik Deflate64 CTF zip (`ZIP_CORE_REAL_DEFLATE64_ZIP`) and the

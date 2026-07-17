@@ -28,7 +28,9 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 crc32fast = "1"
 thiserror = "2"
 # Pure-Rust, decompress-only codecs (NO *-sys). Versions verified to resolve.
-deflate64 = "0.1"        # method 9 — Deflate64 (pure Rust; zip-rs uses the same)
+# method 9 — Deflate64 (pure Rust; zip-rs uses the same). The `checkpoint` feature
+# provides mid-stream decoder state save/restore, backing block-indexed seek.
+deflate64 = { version = "0.1", features = ["checkpoint"] }
 bzip2-rs = "0.1"         # method 12 — bzip2 decompress-only, pure Rust
 ruzstd = "0.8"           # method 93 — Zstandard decoder, pure Rust
 lzma-rs = "0.3"          # methods 14/95 — LZMA (ZIP wrapper) + XZ, pure Rust

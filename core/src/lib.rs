@@ -17,6 +17,7 @@ mod bytes;
 mod codec;
 mod cp437;
 mod crypto;
+mod deflate64_seek;
 #[cfg(feature = "vfs")]
 mod vfs;
 
@@ -162,6 +163,8 @@ struct StoredBlock {
 enum Layout {
     /// The deflate stream is entirely stored blocks — direct seek, no inflation.
     StoredBlocks(Vec<StoredBlock>),
+    /// A genuinely-compressed Deflate64 (method 9) entry: checkpoint-indexed seek.
+    Deflate64(deflate64_seek::Deflate64Index),
     /// A genuinely-compressed entry: correctness-preserving full-decompress path.
     Fallback { path: PathBuf, name: String },
 }
@@ -190,11 +193,25 @@ impl StoredZipEntry {
         matches!(self.layout, Layout::StoredBlocks(_))
     }
 
-    /// Number of indexed stored blocks (0 for the fallback path).
+    /// Number of indexed stored blocks (0 for the other paths).
     pub fn block_count(&self) -> usize {
         match &self.layout {
             Layout::StoredBlocks(b) => b.len(),
-            Layout::Fallback { .. } => 0,
+            Layout::Deflate64(_) | Layout::Fallback { .. } => 0,
+        }
+    }
+
+    /// `true` when the entry is a genuinely-compressed Deflate64 (method 9) entry
+    /// served by the checkpoint-indexed seek path.
+    pub fn is_deflate64_checkpoint_indexed(&self) -> bool {
+        matches!(self.layout, Layout::Deflate64(_))
+    }
+
+    /// Number of indexed Deflate64 checkpoints (0 for the other paths).
+    pub fn checkpoint_count(&self) -> usize {
+        match &self.layout {
+            Layout::Deflate64(index) => index.checkpoint_count(),
+            Layout::StoredBlocks(_) | Layout::Fallback { .. } => 0,
         }
     }
 
@@ -231,6 +248,7 @@ impl StoredZipEntry {
                 }
                 Ok(filled)
             }
+            Layout::Deflate64(index) => index.read_at(&self.file, buf, offset),
             Layout::Fallback { path, name } => {
                 // Rare path (genuinely-compressed entry): never hit by 0%-deflate
                 // forensic images. Correct, if O(n) per read. Decoded by the native
@@ -259,6 +277,7 @@ pub fn open_entry(path: &Path, name: &str) -> Result<StoredZipEntry, ZipCoreErro
     let compressed_size = entry.compressed_size();
     let data_start = entry.data_start();
     let is_deflate = entry.compression() == CompressionMethod::Deflated;
+    let is_deflate64 = entry.compression() == CompressionMethod::Deflate64;
     let is_stored = entry.compression() == CompressionMethod::Stored;
     drop(entry);
     drop(archive);
@@ -277,6 +296,21 @@ pub fn open_entry(path: &Path, name: &str) -> Result<StoredZipEntry, ZipCoreErro
                 path: path.to_path_buf(),
                 name: name.to_string(),
             },
+        }
+    } else if is_deflate64 {
+        // A 0%-compression Deflate64 entry is stored blocks (identical to method 8),
+        // so prefer the zero-copy direct-seek path; genuinely-compressed Deflate64
+        // uses the checkpoint-indexed seek path.
+        match index_stored_blocks(&file, name, data_start, compressed_size, uncompressed_size)? {
+            Some(blocks) => Layout::StoredBlocks(blocks),
+            None => Layout::Deflate64(deflate64_seek::build_index(
+                &file,
+                name,
+                data_start,
+                compressed_size,
+                uncompressed_size,
+                deflate64_seek::DEFAULT_CHECKPOINT_INTERVAL,
+            )?),
         }
     } else {
         Layout::Fallback {
