@@ -161,6 +161,82 @@ fn open_entry_bzip2_uses_fallback_and_reads() {
     assert_eq!(&buf[..n], &payload[1000..1000 + n]);
 }
 
+// ---- open_entry method-9 routes through the Deflate64 checkpoint seek path ----
+
+#[test]
+fn open_entry_deflate64_uses_checkpoint_seek_and_reads() {
+    // A genuinely-compressed Deflate64 member: not stored-block addressable, so
+    // the public gate must route it to the checkpoint-indexed seek path.
+    let bytes = fixture("codecs/seek-deflate64.zip");
+    let (_d, path) = write_tmp(&bytes);
+    let entry = zip_core::open_entry(&path, "bigfile.txt").unwrap();
+    assert!(!entry.is_stored_block_indexed());
+    assert!(
+        entry.is_deflate64_checkpoint_indexed(),
+        "compressed Deflate64 => checkpoint seek path"
+    );
+    assert_eq!(entry.block_count(), 0);
+    assert!(
+        entry.checkpoint_count() >= 1,
+        "at least the start checkpoint"
+    );
+
+    // Oracle: the same content, independently reconstructed from the generator.
+    let mut oracle = Vec::new();
+    for i in 0..4096u32 {
+        oracle.extend_from_slice(
+            format!(
+                "{i:08} the quick brown fox jumps over the lazy dog - lorem ipsum dolor sit amet consectetur\n"
+            )
+            .as_bytes(),
+        );
+    }
+    assert_eq!(entry.len(), oracle.len() as u64);
+
+    for &(off, len) in &[
+        (0u64, 200usize),
+        (123_456, 1000),
+        (oracle.len() as u64 - 1, 1),
+    ] {
+        let mut buf = vec![0u8; len];
+        let n = entry.read_at(&mut buf, off).unwrap();
+        let end = (off as usize + len).min(oracle.len());
+        assert_eq!(&buf[..n], &oracle[off as usize..end], "off={off} len={len}");
+    }
+    // offset past end returns 0
+    let mut z = [0u8; 4];
+    assert_eq!(entry.read_at(&mut z, oracle.len() as u64).unwrap(), 0);
+}
+
+#[test]
+fn open_entry_deflate64_stored_blocks_takes_zero_copy_path() {
+    // A 0%-compression Deflate64 entry is a run of deflate stored blocks (BTYPE=0),
+    // byte-identical to method 8, so the gate must take the zero-copy stored-block
+    // path — not the checkpoint path. This also covers checkpoint_count()==0 for a
+    // non-Deflate64 layout.
+    let payload = b"hello deflate64 stored-block payload, no huffman here".to_vec();
+    let len = payload.len() as u16;
+    let mut comp = vec![0x01u8]; // bfinal=1, btype=0 (stored)
+    comp.extend_from_slice(&len.to_le_bytes());
+    comp.extend_from_slice(&(!len).to_le_bytes());
+    comp.extend_from_slice(&payload);
+    let bytes = build_zip(9, &comp, payload.len() as u32, crc32(&payload));
+    let (_d, path) = write_tmp(&bytes);
+
+    let entry = zip_core::open_entry(&path, "e.bin").unwrap();
+    assert!(
+        entry.is_stored_block_indexed(),
+        "0%-Deflate64 => stored blocks"
+    );
+    assert!(!entry.is_deflate64_checkpoint_indexed());
+    assert_eq!(entry.checkpoint_count(), 0);
+    assert_eq!(entry.block_count(), 1);
+
+    let mut buf = vec![0u8; payload.len()];
+    let n = entry.read_at(&mut buf, 0).unwrap();
+    assert_eq!(&buf[..n], &payload[..]);
+}
+
 // ---- codec error arms ----
 
 fn decode_err(method: u16, comp: &[u8], uncomp_size: u32) -> bool {
