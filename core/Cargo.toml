@@ -38,6 +38,7 @@ lzma-rs = "0.3"          # methods 14/95 — LZMA (ZIP wrapper) + XZ, pure Rust
 # WinZip AES uses audited RustCrypto primitives — NEVER hand-rolled (CLAUDE.md).
 aes = "0.8"
 ctr = "0.9"
+cbc = "0.1"              # AES-CBC for PKWARE strong encryption (RustCrypto)
 hmac = "0.12"
 sha1 = "0.10"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }

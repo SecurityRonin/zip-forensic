@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use crate::bytes::Reader;
 use crate::codec::Decoder;
-use crate::crypto::{AesInfo, AesReader, ZipCryptoReader};
+use crate::crypto::{read_strong_header, AesInfo, AesReader, StrongAesReader, ZipCryptoReader};
 use crate::{FormatError, ZipCoreError};
 
 const EOCD_SIG: u32 = 0x0605_4b50;
@@ -307,20 +307,20 @@ impl<R: Read + Seek> ZipArchive<R> {
         if meta.flags & 0x0001 == 0 && meta.aes.is_none() {
             return self.open(meta);
         }
-        // PKWARE Strong Encryption (GP bit 6) and masked/central-directory
-        // encryption (GP bit 13) are unsupported — fail loud rather than misread
-        // the stream as traditional ZipCrypto. Only ZipCrypto + WinZip AES decode.
-        if meta.aes.is_none() && meta.flags & 0x0040 != 0 {
-            return Err(ZipCoreError::UnsupportedEncryption {
-                entry: meta.name,
-                reason: "PKWARE strong encryption (GP flag bit 6)".to_string(),
-            });
-        }
+        // Masked / central-directory encryption (GP bit 13) is unsupported — fail
+        // loud rather than misread the stream.
         if meta.flags & 0x2000 != 0 {
             return Err(ZipCoreError::UnsupportedEncryption {
                 entry: meta.name,
                 reason: "masked / central-directory encryption (GP flag bit 13)".to_string(),
             });
+        }
+        // PKWARE strong encryption (GP bit 6): decrypt the password-based AES
+        // variant; every other strong variant (certificate, 3DES-ERD, non-AES) is
+        // refused loud inside `read_strong_header`. Traditional ZipCrypto and
+        // WinZip AES (method 99) take the path below.
+        if meta.aes.is_none() && meta.flags & 0x0040 != 0 {
+            return self.open_strong_decrypt(meta, password);
         }
         let (_local, data_start) = read_lfh_fields(&mut self.reader, meta.lfh_offset)?;
         self.reader.seek(SeekFrom::Start(data_start))?;
@@ -350,6 +350,54 @@ impl<R: Read + Seek> ZipArchive<R> {
             bytes_out: 0,
             verified: false,
             verify_crc,
+            meta,
+        })
+    }
+
+    /// Open a PKWARE strong-encryption entry (password-based AES variant). Parses
+    /// the decryption header prepended to the entry data, derives the AES file key
+    /// (verifying the password), then CBC-decrypts the file data and feeds it to
+    /// the entry's normal decoder. For strong encryption the method field is the
+    /// real compression method (no method-99 indirection), so `meta.method`
+    /// selects the decoder directly.
+    fn open_strong_decrypt(
+        &mut self,
+        meta: CentralEntry,
+        password: &[u8],
+    ) -> Result<ZipFile<'_>, ZipCoreError> {
+        let (_local, data_start) = read_lfh_fields(&mut self.reader, meta.lfh_offset)?;
+        self.reader.seek(SeekFrom::Start(data_start))?;
+        let mut take = (&mut self.reader).take(meta.compressed_size);
+        let hdr = read_strong_header(
+            &mut take,
+            password,
+            meta.crc32,
+            meta.uncompressed_size,
+            &meta.name,
+        )?;
+        // The encrypted file data is what remains of the compressed span after the
+        // decryption header (a multiple of the AES block size). `read_strong_header`
+        // only returns Ok after consuming exactly `header_len` bytes from the stream
+        // capped at `compressed_size`, so `compressed_size >= header_len` always;
+        // `saturating_sub` is therefore exact and infallible.
+        let enc_len = meta.compressed_size.saturating_sub(hdr.header_len);
+        let strong = StrongAesReader::new(take, &hdr.file_key, &hdr.iv, enc_len, &meta.name)?;
+        // A `Stored` entry's compressed length equals its uncompressed length, so
+        // cap the decrypted stream there to drop the trailing CBC pad. A genuinely
+        // compressed entry's decoder self-terminates, leaving the pad unread.
+        let reader: Box<dyn Read + '_> = if meta.method == CompressionMethod::Stored {
+            Box::new(strong.take(meta.uncompressed_size))
+        } else {
+            Box::new(strong)
+        };
+        let decoder = Decoder::new(meta.method, meta.uncompressed_size, reader)?;
+        Ok(ZipFile {
+            data_start,
+            decoder,
+            hasher: crc32fast::Hasher::new(),
+            bytes_out: 0,
+            verified: false,
+            verify_crc: true,
             meta,
         })
     }
