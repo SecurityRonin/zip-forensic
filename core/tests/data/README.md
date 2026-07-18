@@ -135,6 +135,28 @@ Exposed a real bug: SecureZIP includes the signature record inside the EOCD
 `cd_size` span, which the previous detection (looking at `cd_offset+cd_size`)
 missed — see `realworld_corpus.rs` / `archive_signature.rs`.
 
+## SecureZIP strong encryption, password-based AES-256 (tier-1 decryption)
+
+`securezip-strong-aes256-pw.zip` — real SecureZIP for Mac output: one entry
+`secret.txt` with PKWARE **strong encryption** (GP-flag bit 6), the *password*
+branch (decryption-header `AlgID=0x6610` AES-256, `Format=3`, `IVSize=16`,
+`Flags=0x0001` — password bit set, certificate bit clear), `Store`d payload.
+Passphrase **`Sr0ninPass!`** (ASCII). Plaintext (61 bytes):
+`TimeGlyph SecureZIP strong-AES validation payload 0123456789\n`.
+
+- **md5 (archive)**: `0f07f66f43dc87ff55bc81f121f30333`, size 1699 bytes.
+- **Ground truth**: `securezip-strong-aes256-pw.expected` (md5
+  `58500ff271e54c1cd4e8ac2d770ac563`, 61 bytes) — the byte-exact output of
+  `7zz x -so -p'Sr0ninPass!' securezip-strong-aes256-pw.zip` captured at commit
+  time. **Tier-1** decryption: independent artifact (SecureZIP) AND independent
+  answer key (7-Zip). `tests/strong_aes.rs` asserts the decrypt equals the
+  committed `.expected`; `oracle_7zz_matches_expected` re-derives it live when
+  `7zz` is present so the committed bytes cannot silently drift.
+- **Validated in** `tests/strong_aes.rs`: correct password → exact plaintext;
+  wrong password → `WrongPassword`; the certificate variant
+  (`securezip-strong-signed.zip`) and non-AES/3DES-ERD headers stay
+  `UnsupportedEncryption`.
+
 ## Decryption corpus — libzip regress (BSD-3-Clause)
 
 Third-party-authored encrypted archives with documented passwords + plaintext
