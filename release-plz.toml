@@ -1,0 +1,51 @@
+# release-plz owns crates.io publishing + changelogs + per-crate version bumps for
+# the workspace LIBRARIES — the reader `zip-forensic-core` and the analyzer
+# `zip-forensic`. It runs on pushes to main (see .github/workflows/release-plz.yml):
+#   - `release-pr`  opens a human-reviewed version-bump PR (conventional commits)
+#   - `release`     publishes any crate whose Cargo.toml version is ahead of
+#                   crates.io, in dependency order, and creates its git tag
+#
+# The debug CLI `zip-forensic-cli` is a workspace member but publish = false; it is
+# marked release = false below so release-plz never bumps or publishes it. The
+# `zip-forensic-fuzz` member carries its own [workspace] and is excluded entirely.
+
+[workspace]
+# Per-package git tags, e.g. `zip-forensic-core-v0.2.0`, `zip-forensic-v0.2.0`. A
+# `<name>-v…` tag has a letter (not a digit) after the first `v`, so it never
+# collides with a `v[0-9]*` binary-release trigger.
+git_tag_enable = true
+# Library crates get a git tag + CHANGELOG entry, not a GitHub Release.
+git_release_enable = false
+changelog_update = true
+# The reader (zip-forensic-core) and the analyzer (zip-forensic) version
+# independently.
+dependencies_update = false
+# Only prepare a release when a real change exists since the last one. This
+# allowlist makes feat/fix/perf/refactor/doc/revert the only release triggers;
+# chore/ci/test/style/build (incl. release-plz's own release commits) never prepare
+# a release (kills the changelog-churn loop).
+release_commits = "^(feat|fix|perf|refactor|doc|revert)"
+
+[changelog]
+commit_parsers = [
+    { message = "^chore\\(release\\):", skip = true },
+    { message = "^chore: release", skip = true },
+    { message = "^feat", group = "added" },
+    { message = "^fix", group = "fixed" },
+    { message = "^perf", group = "performance" },
+    { message = "^refactor", group = "other" },
+    { message = "^doc", group = "documentation" },
+    { message = "^revert", group = "other" },
+    { message = "^style", skip = true },
+    { message = "^test", skip = true },
+    { message = "^ci", skip = true },
+    { message = "^build", skip = true },
+    { message = "^chore", skip = true },
+    { message = "^.*", group = "other" },
+]
+
+# The debug CLI (`zip4n6`) is publish = false and is not part of library
+# publishing; release-plz never bumps or publishes it.
+[[package]]
+name = "zip-forensic-cli"
+release = false
