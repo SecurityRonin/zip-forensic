@@ -15,6 +15,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 
 [dependencies.zip-core]
+package = "zip-forensic-core"
 path = "../core"
 
 [dependencies.zip-forensic]

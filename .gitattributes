@@ -1,0 +1,7 @@
+# Forensic test corpus: every file is a byte-exact fixture — a real-world
+# archive or a reference-CLI answer key consumed verbatim via include_bytes! /
+# fs::read. Line-ending normalization corrupts them (Windows autocrlf turns an
+# LF answer key into CRLF, so a byte-exact decode assertion fails on that runner
+# only). Pin the whole corpus to binary so no platform ever touches the bytes.
+tests/data/** -text
+core/tests/data/** -text

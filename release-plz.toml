@@ -50,3 +50,8 @@ commit_parsers = [
 [[package]]
 name = "zip-forensic-cli"
 release = false
+# Mirror the crate's own `publish = false` (cli/Cargo.toml). release-plz validates
+# that its per-package `publish` matches the manifest; without this it defaults to
+# `publish = true` and aborts: "has publish = false in the Cargo.toml, but it has
+# publish = true in the release-plz configuration."
+publish = false
