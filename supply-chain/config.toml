@@ -17,10 +17,10 @@ url = "https://raw.githubusercontent.com/google/rust-crate-audits/main/audits.to
 url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 
 [policy.zip-forensic]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [policy.zip-forensic-core]
-audit-as-crates-io = true
+audit-as-crates-io = false
 
 [[exemptions.aes]]
 version = "0.8.4"
@@ -325,14 +325,6 @@ criteria = "safe-to-run"
 [[exemptions.zeroize_derive]]
 version = "1.5.0"
 criteria = "safe-to-run"
-
-[[exemptions.zip-forensic]]
-version = "0.2.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.zip-forensic-core]]
-version = "0.2.0"
-criteria = "safe-to-deploy"
 
 [[exemptions.zopfli]]
 version = "0.8.3"
