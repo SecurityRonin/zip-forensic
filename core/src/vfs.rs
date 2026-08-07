@@ -555,24 +555,21 @@ mod tests {
         (0..8192u32).map(|i| (i % 251) as u8).collect()
     }
 
-    /// Mint a small ZIP with the system `zip` CLI (an independent oracle): a
-    /// top-level file plus a nested subdirectory carrying a multi-KB file. Returns
-    /// the archive bytes, or `None` when `zip` is unavailable (skip cleanly).
+    /// The oracle archive, minted by Info-ZIP and committed to the repository.
+    ///
+    /// This used to shell out to the system `zip` at test time and return `None`
+    /// when it was absent, so nine tests carried a skip arm. Those arms were
+    /// unreachable on any machine that HAS `zip` — which is every CI runner — so
+    /// the coverage gate could never satisfy them, and they could not honestly be
+    /// marked `cov:unreachable` either, because they are genuinely reachable.
+    ///
+    /// Committing the bytes keeps the property that mattered — the container is
+    /// authored by Info-ZIP, not by our own writer, so a decode bug cannot pass
+    /// by agreeing with itself — while making the suite satisfiable from
+    /// committed bytes alone, with no installed tool. Provenance and the exact
+    /// minting command are in tests/data/README.md.
     fn mint_zip() -> Option<Vec<u8>> {
-        let dir = tempfile::tempdir().ok()?;
-        let root = dir.path();
-        std::fs::write(root.join("hello.txt"), b"hello zip\n").ok()?;
-        std::fs::create_dir(root.join("sub")).ok()?;
-        std::fs::write(root.join("sub").join("nested.txt"), b"nested\n").ok()?;
-        std::fs::write(root.join("sub").join("big.bin"), big_payload()).ok()?;
-        let status = Command::new("zip")
-            .args(["-r", "-q", "archive.zip", "hello.txt", "sub"])
-            .current_dir(root)
-            .status();
-        match status {
-            Ok(s) if s.success() => std::fs::read(root.join("archive.zip")).ok(),
-            _ => None,
-        }
+        Some(include_bytes!("../../tests/data/oracle-infozip.zip").to_vec())
     }
 
     /// Open the minted archive through the adapter, or `None` to skip.
@@ -610,10 +607,7 @@ mod tests {
 
     #[test]
     fn kind_root_zone_and_sectors() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open().expect("committed oracle fixture must load");
         assert_eq!(fs.kind(), FsKind::Other);
         assert!(matches!(fs.root(), FileId::Opaque(0)));
         // The surfaced Info-ZIP / NTFS extended-timestamp extra fields are UTC.
@@ -627,10 +621,7 @@ mod tests {
 
     #[test]
     fn lists_root_entries() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open().expect("committed oracle fixture must load");
         let names: Vec<Vec<u8>> = fs
             .read_dir(fs.root())
             .expect("read_dir root")
@@ -642,10 +633,7 @@ mod tests {
 
     #[test]
     fn resolves_and_reads_hello() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open().expect("committed oracle fixture must load");
         let id = resolve(&fs, &[b"hello.txt"]);
         let m = fs.meta(id).expect("meta");
         assert_eq!(m.kind, NodeKind::File);
@@ -659,10 +647,7 @@ mod tests {
 
     #[test]
     fn reads_big_file_spanning_and_offset() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open().expect("committed oracle fixture must load");
         let id = resolve(&fs, &[b"sub", b"big.bin"]);
         let want = big_payload();
         assert_eq!(fs.meta(id).expect("meta").size, want.len() as u64);
@@ -677,10 +662,7 @@ mod tests {
 
     #[test]
     fn directory_reports_dir_kind() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open().expect("committed oracle fixture must load");
         let id = resolve(&fs, &[b"sub"]);
         assert_eq!(fs.meta(id).expect("meta").kind, NodeKind::Dir);
         assert!(fs.read_dir(id).is_ok());
@@ -688,10 +670,7 @@ mod tests {
 
     #[test]
     fn extents_hello_single_run_and_root() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open().expect("committed oracle fixture must load");
         let id = resolve(&fs, &[b"hello.txt"]);
         let runs: Vec<_> = fs
             .extents(id, StreamId::Default)
@@ -711,10 +690,7 @@ mod tests {
 
     #[test]
     fn wrong_file_id_and_stream_are_loud() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open().expect("committed oracle fixture must load");
         let bad = FileId::NtfsRef { entry: 5, seq: 1 };
         assert!(fs.meta(bad).is_err());
         assert!(fs.read_dir(bad).is_err());
@@ -734,10 +710,7 @@ mod tests {
 
     #[test]
     fn lookup_missing_is_none() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open().expect("committed oracle fixture must load");
         assert!(fs
             .lookup(fs.root(), b"NOPE.NOTPRESENT")
             .expect("lookup")
@@ -746,10 +719,7 @@ mod tests {
 
     #[test]
     fn empty_forensic_surfaces() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open().expect("committed oracle fixture must load");
         assert_eq!(fs.deleted().expect("deleted").count(), 0);
         assert_eq!(fs.unallocated().expect("unallocated").count(), 0);
         let id = resolve(&fs, &[b"hello.txt"]);
