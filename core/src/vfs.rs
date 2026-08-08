@@ -541,7 +541,6 @@ impl<R: Read + Seek + Send> FileSystem for ZipVfs<R> {
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
-    use std::process::Command;
 
     use forensic_vfs::{
         Allocation, FileId, FileSystem, FsKind, NodeKind, RunAlloc, StreamId, TimeZonePolicy,
@@ -568,14 +567,13 @@ mod tests {
     /// by agreeing with itself — while making the suite satisfiable from
     /// committed bytes alone, with no installed tool. Provenance and the exact
     /// minting command are in tests/data/README.md.
-    fn mint_zip() -> Option<Vec<u8>> {
-        Some(include_bytes!("../../tests/data/oracle-infozip.zip").to_vec())
+    fn oracle_zip() -> Vec<u8> {
+        include_bytes!("../../tests/data/oracle-infozip.zip").to_vec()
     }
 
     /// Open the minted archive through the adapter, or `None` to skip.
-    fn open() -> Option<ZipVfs<Cursor<Vec<u8>>>> {
-        let bytes = mint_zip()?;
-        Some(ZipVfs::open(Cursor::new(bytes)).expect("open minted zip"))
+    fn open() -> ZipVfs<Cursor<Vec<u8>>> {
+        ZipVfs::open(Cursor::new(oracle_zip())).expect("open oracle zip")
     }
 
     /// Resolve a `/`-separated path from the synthetic root via `lookup`.
@@ -607,7 +605,7 @@ mod tests {
 
     #[test]
     fn kind_root_zone_and_sectors() {
-        let fs = open().expect("committed oracle fixture must load");
+        let fs = open();
         assert_eq!(fs.kind(), FsKind::Other);
         assert!(matches!(fs.root(), FileId::Opaque(0)));
         // The surfaced Info-ZIP / NTFS extended-timestamp extra fields are UTC.
@@ -621,7 +619,7 @@ mod tests {
 
     #[test]
     fn lists_root_entries() {
-        let fs = open().expect("committed oracle fixture must load");
+        let fs = open();
         let names: Vec<Vec<u8>> = fs
             .read_dir(fs.root())
             .expect("read_dir root")
@@ -633,7 +631,7 @@ mod tests {
 
     #[test]
     fn resolves_and_reads_hello() {
-        let fs = open().expect("committed oracle fixture must load");
+        let fs = open();
         let id = resolve(&fs, &[b"hello.txt"]);
         let m = fs.meta(id).expect("meta");
         assert_eq!(m.kind, NodeKind::File);
@@ -647,7 +645,7 @@ mod tests {
 
     #[test]
     fn reads_big_file_spanning_and_offset() {
-        let fs = open().expect("committed oracle fixture must load");
+        let fs = open();
         let id = resolve(&fs, &[b"sub", b"big.bin"]);
         let want = big_payload();
         assert_eq!(fs.meta(id).expect("meta").size, want.len() as u64);
@@ -662,7 +660,7 @@ mod tests {
 
     #[test]
     fn directory_reports_dir_kind() {
-        let fs = open().expect("committed oracle fixture must load");
+        let fs = open();
         let id = resolve(&fs, &[b"sub"]);
         assert_eq!(fs.meta(id).expect("meta").kind, NodeKind::Dir);
         assert!(fs.read_dir(id).is_ok());
@@ -670,7 +668,7 @@ mod tests {
 
     #[test]
     fn extents_hello_single_run_and_root() {
-        let fs = open().expect("committed oracle fixture must load");
+        let fs = open();
         let id = resolve(&fs, &[b"hello.txt"]);
         let runs: Vec<_> = fs
             .extents(id, StreamId::Default)
@@ -690,7 +688,7 @@ mod tests {
 
     #[test]
     fn wrong_file_id_and_stream_are_loud() {
-        let fs = open().expect("committed oracle fixture must load");
+        let fs = open();
         let bad = FileId::NtfsRef { entry: 5, seq: 1 };
         assert!(fs.meta(bad).is_err());
         assert!(fs.read_dir(bad).is_err());
@@ -710,7 +708,7 @@ mod tests {
 
     #[test]
     fn lookup_missing_is_none() {
-        let fs = open().expect("committed oracle fixture must load");
+        let fs = open();
         assert!(fs
             .lookup(fs.root(), b"NOPE.NOTPRESENT")
             .expect("lookup")
@@ -719,7 +717,7 @@ mod tests {
 
     #[test]
     fn empty_forensic_surfaces() {
-        let fs = open().expect("committed oracle fixture must load");
+        let fs = open();
         assert_eq!(fs.deleted().expect("deleted").count(), 0);
         assert_eq!(fs.unallocated().expect("unallocated").count(), 0);
         let id = resolve(&fs, &[b"hello.txt"]);
