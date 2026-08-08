@@ -826,7 +826,7 @@ dependencies = [
 
 [[package]]
 name = "zip-forensic"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "forensicnomicon",
  "tempfile",
@@ -844,7 +844,7 @@ dependencies = [
 
 [[package]]
 name = "zip-forensic-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "aes",
  "bzip2-rs",
