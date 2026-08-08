@@ -510,7 +510,7 @@ impl<R: Read + Seek + Send> FileSystem for ZipVfs<R> {
         };
         let data = self.content(idx, entry_idx)?;
         let Ok(start) = usize::try_from(off) else {
-            return Ok(0);
+            return Ok(0); // cov:unreachable: usize is 64-bit on every target this crate is built for, so u64 -> usize cannot fail; the guard is for a 32-bit build
         };
         if start >= data.len() {
             return Ok(0);
@@ -540,11 +540,11 @@ impl<R: Read + Seek + Send> FileSystem for ZipVfs<R> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
-    use std::process::Command;
+    use std::io::{Cursor, Read, Seek, SeekFrom};
 
     use forensic_vfs::{
-        Allocation, FileId, FileSystem, FsKind, NodeKind, RunAlloc, StreamId, TimeZonePolicy,
+        Allocation, FileId, FileSystem, FsKind, NodeKind, RunAlloc, StreamId, TimeResolution,
+        TimeZonePolicy, VfsError,
     };
 
     use super::ZipVfs;
@@ -555,30 +555,26 @@ mod tests {
         (0..8192u32).map(|i| (i % 251) as u8).collect()
     }
 
-    /// Mint a small ZIP with the system `zip` CLI (an independent oracle): a
-    /// top-level file plus a nested subdirectory carrying a multi-KB file. Returns
-    /// the archive bytes, or `None` when `zip` is unavailable (skip cleanly).
-    fn mint_zip() -> Option<Vec<u8>> {
-        let dir = tempfile::tempdir().ok()?;
-        let root = dir.path();
-        std::fs::write(root.join("hello.txt"), b"hello zip\n").ok()?;
-        std::fs::create_dir(root.join("sub")).ok()?;
-        std::fs::write(root.join("sub").join("nested.txt"), b"nested\n").ok()?;
-        std::fs::write(root.join("sub").join("big.bin"), big_payload()).ok()?;
-        let status = Command::new("zip")
-            .args(["-r", "-q", "archive.zip", "hello.txt", "sub"])
-            .current_dir(root)
-            .status();
-        match status {
-            Ok(s) if s.success() => std::fs::read(root.join("archive.zip")).ok(),
-            _ => None,
-        }
+    /// The oracle archive, minted by Info-ZIP and committed to the repository.
+    ///
+    /// This used to shell out to the system `zip` at test time and return `None`
+    /// when it was absent, so nine tests carried a skip arm. Those arms were
+    /// unreachable on any machine that HAS `zip` — which is every CI runner — so
+    /// the coverage gate could never satisfy them, and they could not honestly be
+    /// marked `cov:unreachable` either, because they are genuinely reachable.
+    ///
+    /// Committing the bytes keeps the property that mattered — the container is
+    /// authored by Info-ZIP, not by our own writer, so a decode bug cannot pass
+    /// by agreeing with itself — while making the suite satisfiable from
+    /// committed bytes alone, with no installed tool. Provenance and the exact
+    /// minting command are in tests/data/README.md.
+    fn oracle_zip() -> Vec<u8> {
+        include_bytes!("../../tests/data/oracle-infozip.zip").to_vec()
     }
 
     /// Open the minted archive through the adapter, or `None` to skip.
-    fn open() -> Option<ZipVfs<Cursor<Vec<u8>>>> {
-        let bytes = mint_zip()?;
-        Some(ZipVfs::open(Cursor::new(bytes)).expect("open minted zip"))
+    fn open() -> ZipVfs<Cursor<Vec<u8>>> {
+        ZipVfs::open(Cursor::new(oracle_zip())).expect("open oracle zip")
     }
 
     /// Resolve a `/`-separated path from the synthetic root via `lookup`.
@@ -608,12 +604,162 @@ mod tests {
         out
     }
 
+    /// One catalogue entry for [`mint_zip`].
+    ///
+    /// The oracle archive is the tier-2 evidence that the adapter decodes a
+    /// *real* container; it cannot supply the container SHAPES a conforming
+    /// writer never emits — an implied parent directory with no record of its
+    /// own, a bare `/` name, an encrypted or corrupt member. Those are minted
+    /// here. This is not self-validation: the bytes are dictated field by field
+    /// below and the READER under test is what has to agree with them.
+    struct Ent<'a> {
+        name: &'a str,
+        /// General-purpose bit flag word (bit 0 = encrypted).
+        flags: u16,
+        /// Compression method (0 = Stored, 8 = Deflate).
+        method: u16,
+        /// The bytes placed verbatim in the entry's data area.
+        data: &'a [u8],
+        /// Central-directory extra field block.
+        extra: &'a [u8],
+    }
+
+    impl<'a> Ent<'a> {
+        /// A plain Stored entry with no extras.
+        fn stored(name: &'a str, data: &'a [u8]) -> Self {
+            Self {
+                name,
+                flags: 0,
+                method: 0,
+                data,
+                extra: &[],
+            }
+        }
+    }
+
+    /// Assemble a ZIP: one local header + data per entry, then the central
+    /// directory, then the EOCD. Sizes/CRCs are self-consistent so the reader
+    /// reaches the behaviour under test rather than tripping an earlier guard.
+    fn mint_zip(entries: &[Ent<'_>]) -> Vec<u8> {
+        let mut o: Vec<u8> = Vec::new();
+        let mut cd: Vec<u8> = Vec::new();
+        for e in entries {
+            let n = e.name.as_bytes();
+            let mut h = crc32fast::Hasher::new();
+            h.update(e.data);
+            let crc = h.finalize();
+            let lfh_offset = o.len() as u32;
+            let sz = e.data.len() as u32;
+
+            o.extend_from_slice(&[0x50, 0x4b, 0x03, 0x04]);
+            o.extend_from_slice(&20u16.to_le_bytes()); // version needed
+            o.extend_from_slice(&e.flags.to_le_bytes());
+            o.extend_from_slice(&e.method.to_le_bytes());
+            o.extend_from_slice(&0u32.to_le_bytes()); // MS-DOS time + date
+            o.extend_from_slice(&crc.to_le_bytes());
+            o.extend_from_slice(&sz.to_le_bytes()); // compressed size
+            o.extend_from_slice(&sz.to_le_bytes()); // uncompressed size
+            o.extend_from_slice(&(n.len() as u16).to_le_bytes());
+            o.extend_from_slice(&0u16.to_le_bytes()); // local extra len
+            o.extend_from_slice(n);
+            o.extend_from_slice(e.data);
+
+            cd.extend_from_slice(&[0x50, 0x4b, 0x01, 0x02]);
+            cd.extend_from_slice(&20u16.to_le_bytes()); // version made by
+            cd.extend_from_slice(&20u16.to_le_bytes()); // version needed
+            cd.extend_from_slice(&e.flags.to_le_bytes());
+            cd.extend_from_slice(&e.method.to_le_bytes());
+            cd.extend_from_slice(&0u32.to_le_bytes()); // MS-DOS time + date
+            cd.extend_from_slice(&crc.to_le_bytes());
+            cd.extend_from_slice(&sz.to_le_bytes());
+            cd.extend_from_slice(&sz.to_le_bytes());
+            cd.extend_from_slice(&(n.len() as u16).to_le_bytes());
+            cd.extend_from_slice(&(e.extra.len() as u16).to_le_bytes());
+            cd.extend_from_slice(&0u16.to_le_bytes()); // comment len
+            cd.extend_from_slice(&0u16.to_le_bytes()); // disk number start
+            cd.extend_from_slice(&0u16.to_le_bytes()); // internal attrs
+            cd.extend_from_slice(&0u32.to_le_bytes()); // external attrs
+            cd.extend_from_slice(&lfh_offset.to_le_bytes());
+            cd.extend_from_slice(n);
+            cd.extend_from_slice(e.extra);
+        }
+
+        let cd_offset = o.len() as u32;
+        let cd_size = cd.len() as u32;
+        let count = entries.len() as u16;
+        o.extend_from_slice(&cd);
+        o.extend_from_slice(&[0x50, 0x4b, 0x05, 0x06]);
+        o.extend_from_slice(&0u16.to_le_bytes()); // this disk
+        o.extend_from_slice(&0u16.to_le_bytes()); // disk with CD start
+        o.extend_from_slice(&count.to_le_bytes());
+        o.extend_from_slice(&count.to_le_bytes());
+        o.extend_from_slice(&cd_size.to_le_bytes());
+        o.extend_from_slice(&cd_offset.to_le_bytes());
+        o.extend_from_slice(&0u16.to_le_bytes()); // comment len
+        o
+    }
+
+    /// Wrap a raw extra-field payload in its `(id, len)` header.
+    fn extra_record(id: u16, data: &[u8]) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(&id.to_le_bytes());
+        v.extend_from_slice(&(data.len() as u16).to_le_bytes());
+        v.extend_from_slice(data);
+        v
+    }
+
+    /// An NTFS extra field (id `0x000a`) carrying the three `FILETIME` stamps.
+    fn ntfs_extra(mtime: u64, atime: u64, ctime: u64) -> Vec<u8> {
+        let mut p = Vec::new();
+        p.extend_from_slice(&0u32.to_le_bytes()); // reserved
+        p.extend_from_slice(&0x0001u16.to_le_bytes()); // tag 1
+        p.extend_from_slice(&0x0018u16.to_le_bytes()); // 24 bytes of times
+        p.extend_from_slice(&mtime.to_le_bytes());
+        p.extend_from_slice(&atime.to_le_bytes());
+        p.extend_from_slice(&ctime.to_le_bytes());
+        extra_record(0x000a, &p)
+    }
+
+    /// Mount minted bytes through the adapter.
+    fn mount(bytes: Vec<u8>) -> ZipVfs<Cursor<Vec<u8>>> {
+        ZipVfs::open(Cursor::new(bytes)).expect("mount minted zip")
+    }
+
+    /// The error from a mount that must fail (`ZipVfs` is not `Debug`, so
+    /// `expect_err` is unavailable).
+    fn mount_err<R: Read + Seek + Send>(reader: R) -> VfsError {
+        ZipVfs::open(reader).err().expect("the mount must fail")
+    }
+
+    /// A `Read + Seek` that seeks fine but fails every read.
+    ///
+    /// The only way to reach `map_err`'s `ZipCoreError::Io` arm: a `Cursor` over
+    /// committed bytes cannot fail, so without this the arm is untestable rather
+    /// than unreachable.
+    struct FailingReader;
+
+    impl Read for FailingReader {
+        fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("synthetic read failure"))
+        }
+    }
+
+    impl Seek for FailingReader {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            match pos {
+                // Report a plausible length so the EOCD scan attempts a read
+                // (and fails) rather than short-circuiting on an empty file.
+                SeekFrom::End(_) => Ok(4096),
+                // Any other seek succeeds; the fault this double injects is on
+                // `read`, never on `seek`.
+                _ => Ok(0),
+            }
+        }
+    }
+
     #[test]
     fn kind_root_zone_and_sectors() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open();
         assert_eq!(fs.kind(), FsKind::Other);
         assert!(matches!(fs.root(), FileId::Opaque(0)));
         // The surfaced Info-ZIP / NTFS extended-timestamp extra fields are UTC.
@@ -627,10 +773,7 @@ mod tests {
 
     #[test]
     fn lists_root_entries() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open();
         let names: Vec<Vec<u8>> = fs
             .read_dir(fs.root())
             .expect("read_dir root")
@@ -642,10 +785,7 @@ mod tests {
 
     #[test]
     fn resolves_and_reads_hello() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open();
         let id = resolve(&fs, &[b"hello.txt"]);
         let m = fs.meta(id).expect("meta");
         assert_eq!(m.kind, NodeKind::File);
@@ -659,10 +799,7 @@ mod tests {
 
     #[test]
     fn reads_big_file_spanning_and_offset() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open();
         let id = resolve(&fs, &[b"sub", b"big.bin"]);
         let want = big_payload();
         assert_eq!(fs.meta(id).expect("meta").size, want.len() as u64);
@@ -677,10 +814,7 @@ mod tests {
 
     #[test]
     fn directory_reports_dir_kind() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open();
         let id = resolve(&fs, &[b"sub"]);
         assert_eq!(fs.meta(id).expect("meta").kind, NodeKind::Dir);
         assert!(fs.read_dir(id).is_ok());
@@ -688,10 +822,7 @@ mod tests {
 
     #[test]
     fn extents_hello_single_run_and_root() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open();
         let id = resolve(&fs, &[b"hello.txt"]);
         let runs: Vec<_> = fs
             .extents(id, StreamId::Default)
@@ -711,10 +842,7 @@ mod tests {
 
     #[test]
     fn wrong_file_id_and_stream_are_loud() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open();
         let bad = FileId::NtfsRef { entry: 5, seq: 1 };
         assert!(fs.meta(bad).is_err());
         assert!(fs.read_dir(bad).is_err());
@@ -734,10 +862,7 @@ mod tests {
 
     #[test]
     fn lookup_missing_is_none() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open();
         assert!(fs
             .lookup(fs.root(), b"NOPE.NOTPRESENT")
             .expect("lookup")
@@ -746,13 +871,279 @@ mod tests {
 
     #[test]
     fn empty_forensic_surfaces() {
-        let Some(fs) = open() else {
-            eprintln!("skipping: `zip` CLI unavailable");
-            return;
-        };
+        let fs = open();
         assert_eq!(fs.deleted().expect("deleted").count(), 0);
         assert_eq!(fs.unallocated().expect("unallocated").count(), 0);
         let id = resolve(&fs, &[b"hello.txt"]);
         assert!(fs.read_link(id, 4096).expect("read_link").is_empty());
+    }
+
+    // --- error mapping (`map_err`) -----------------------------------------
+    //
+    // `ZipVfs::open` succeeds on the oracle archive, so every arm of the error
+    // map is only reached by a container that actually fails. Each test below
+    // asserts the mapped VARIANT, not merely that an error occurred: the whole
+    // point of the map is that an I/O fault, a not-a-ZIP, an unsupported
+    // feature and a structural decode failure stay distinguishable.
+
+    #[test]
+    fn read_fault_maps_to_vfs_io() {
+        let err = mount_err(FailingReader);
+        assert!(
+            matches!(err, VfsError::Io { op: "zip read", .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn not_a_zip_is_a_loud_bootstrap_failure() {
+        let err = mount_err(Cursor::new(vec![0x41u8; 512]));
+        // A missing EOCD is a failed mount, never an empty-but-successful one.
+        assert!(
+            matches!(
+                &err,
+                VfsError::Bootstrap { stage, detail }
+                    if *stage == "zip mount" && detail.contains("End Of Central Directory")
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn bad_local_header_signature_is_a_decode_failure() {
+        let mut bytes = mint_zip(&[Ent::stored("f.txt", b"payload")]);
+        // Corrupt the local file header signature the central directory points at.
+        bytes[3] = 0xFF;
+        let err = mount_err(Cursor::new(bytes));
+        assert!(
+            matches!(err, VfsError::Decode { layer: "zip", .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn encrypted_entry_is_navigable_but_reading_it_is_refused() {
+        // Bit 0 of the general-purpose flags marks the entry encrypted. The tree
+        // is built from the central directory, so the entry must still be
+        // listed and sized; only its BYTES are refused (no password), never
+        // returned as garbage or as a silent empty read.
+        let fs = mount(mint_zip(&[Ent {
+            name: "secret.bin",
+            flags: 0x0001,
+            method: 0,
+            data: b"ciphertext",
+            extra: &[],
+        }]));
+        let id = resolve(&fs, &[b"secret.bin"]);
+        assert_eq!(fs.meta(id).expect("meta").size, b"ciphertext".len() as u64);
+
+        let err = fs
+            .read_at(id, StreamId::Default, 0, &mut [0u8; 4])
+            .expect_err("no password was supplied");
+        assert!(
+            matches!(err, VfsError::Unsupported { layer: "zip", .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn corrupt_compressed_stream_surfaces_the_decode_io_error() {
+        // Method 8 (Deflate) over bytes that are not a deflate stream: 0xFF sets
+        // BFINAL with the reserved block type, so the decoder rejects it. The
+        // failure arrives while draining the entry, which is the one path that
+        // maps a mid-read fault rather than an open fault.
+        let fs = mount(mint_zip(&[Ent {
+            name: "broken.bin",
+            flags: 0,
+            method: 8,
+            data: &[0xFF, 0xFF, 0xFF, 0xFF],
+            extra: &[],
+        }]));
+        let id = resolve(&fs, &[b"broken.bin"]);
+        let err = fs
+            .read_at(id, StreamId::Default, 0, &mut [0u8; 8])
+            .expect_err("garbage is not a deflate stream");
+        assert!(
+            matches!(err, VfsError::Io { op: "zip read", .. }),
+            "got {err:?}"
+        );
+    }
+
+    // --- timestamps --------------------------------------------------------
+
+    #[test]
+    fn ntfs_filetime_extras_convert_and_outrank_unix_seconds() {
+        // 1601-01-01 → 1970-01-01 is 116_444_736_000_000_000 ticks of 100 ns, so
+        // this FILETIME is exactly Unix second 1_600_000_000.
+        const EPOCH_DIFF: u64 = 116_444_736_000_000_000;
+        let mtime = EPOCH_DIFF + 1_600_000_000 * 10_000_000;
+        let atime = EPOCH_DIFF + 1_600_000_001 * 10_000_000;
+        let ctime = EPOCH_DIFF + 1_600_000_002 * 10_000_000;
+
+        // An Info-ZIP extended timestamp (0x5455) with deliberately DIFFERENT
+        // values, so the assertions below distinguish which source was used.
+        let mut uxt = vec![0x07u8]; // mtime + atime + ctime present
+        uxt.extend_from_slice(&1i32.to_le_bytes());
+        uxt.extend_from_slice(&2i32.to_le_bytes());
+        uxt.extend_from_slice(&3i32.to_le_bytes());
+
+        let mut extra = ntfs_extra(mtime, atime, ctime);
+        extra.extend_from_slice(&extra_record(0x5455, &uxt));
+
+        let fs = mount(mint_zip(&[Ent {
+            name: "stamped.txt",
+            flags: 0,
+            method: 0,
+            data: b"x",
+            extra: &extra,
+        }]));
+        let times = fs
+            .meta(resolve(&fs, &[b"stamped.txt"]))
+            .expect("meta")
+            .times;
+
+        let m = times.modified.expect("modified");
+        assert_eq!(m.unix_nanos, 1_600_000_000_000_000_000);
+        assert_eq!(m.resolution, TimeResolution::WinFileTime);
+        assert_eq!(
+            times.accessed.expect("accessed").unix_nanos,
+            1_600_000_001_000_000_000
+        );
+        // The ZIP "ctime" extra field records CREATION time, so it lands on born.
+        assert_eq!(
+            times.born.expect("born").unix_nanos,
+            1_600_000_002_000_000_000
+        );
+        // ZIP carries no inode-change time; it is honestly absent.
+        assert!(times.changed.is_none());
+    }
+
+    // --- derived directory tree --------------------------------------------
+
+    #[test]
+    fn implied_parent_directories_are_synthesized() {
+        // Some producers omit the trailing-'/' directory records entirely. Both
+        // levels must still be walkable, and the synthesized nodes report as
+        // directories with no backing entry (size 0, no timestamps).
+        let fs = mount(mint_zip(&[Ent::stored("a/b/c.txt", b"deep")]));
+
+        let a = resolve(&fs, &[b"a"]);
+        let a_meta = fs.meta(a).expect("meta a");
+        assert_eq!(a_meta.kind, NodeKind::Dir);
+        assert_eq!(a_meta.size, 0);
+        assert!(a_meta.times.modified.is_none(), "synthesized, not stamped");
+
+        let b = resolve(&fs, &[b"a", b"b"]);
+        assert_eq!(fs.meta(b).expect("meta b").kind, NodeKind::Dir);
+
+        let names: Vec<Vec<u8>> = fs
+            .read_dir(b)
+            .expect("read_dir a/b")
+            .map(|e| e.expect("entry").name)
+            .collect();
+        assert_eq!(names, vec![b"c.txt".to_vec()]);
+        assert_eq!(
+            read_all(&fs, resolve(&fs, &[b"a", b"b", b"c.txt"])),
+            b"deep"
+        );
+    }
+
+    #[test]
+    fn an_explicit_record_adopts_the_directory_implied_before_it() {
+        // `d` is implied by the file, then named outright by a later record. The
+        // node must keep its identity (one `d`, not two) and gain the explicit
+        // record's timestamps.
+        const EPOCH_DIFF: u64 = 116_444_736_000_000_000;
+        let stamp = ntfs_extra(
+            EPOCH_DIFF + 1_700_000_000 * 10_000_000,
+            EPOCH_DIFF,
+            EPOCH_DIFF,
+        );
+        let fs = mount(mint_zip(&[
+            Ent::stored("d/f.txt", b"leaf"),
+            Ent {
+                name: "d/",
+                flags: 0,
+                method: 0,
+                data: b"",
+                extra: &stamp,
+            },
+        ]));
+
+        let root_names: Vec<Vec<u8>> = fs
+            .read_dir(fs.root())
+            .expect("read_dir root")
+            .map(|e| e.expect("entry").name)
+            .collect();
+        assert_eq!(root_names, vec![b"d".to_vec()], "no duplicate `d` node");
+
+        let d = resolve(&fs, &[b"d"]);
+        assert_eq!(fs.meta(d).expect("meta d").kind, NodeKind::Dir);
+        // The timestamps prove the explicit record was adopted onto the node the
+        // file had already implied, rather than silently discarded.
+        assert_eq!(
+            fs.meta(d)
+                .expect("meta d")
+                .times
+                .modified
+                .expect("adopted mtime")
+                .unix_nanos,
+            1_700_000_000_000_000_000
+        );
+        assert_eq!(read_all(&fs, resolve(&fs, &[b"d", b"f.txt"])), b"leaf");
+    }
+
+    #[test]
+    fn a_bare_separator_entry_names_no_node() {
+        // "/" has no addressable path components, so it contributes no node —
+        // and does not derail the entries around it.
+        let fs = mount(mint_zip(&[
+            Ent::stored("/", b""),
+            Ent::stored("ok.txt", b"fine"),
+        ]));
+        let names: Vec<Vec<u8>> = fs
+            .read_dir(fs.root())
+            .expect("read_dir root")
+            .map(|e| e.expect("entry").name)
+            .collect();
+        assert_eq!(names, vec![b"ok.txt".to_vec()]);
+    }
+
+    // --- wrong-kind operations ---------------------------------------------
+
+    #[test]
+    fn lookup_under_a_file_is_loud() {
+        let fs = open();
+        let file = resolve(&fs, &[b"hello.txt"]);
+        let err = fs
+            .lookup(file, b"anything")
+            .expect_err("a file has no children");
+        assert!(
+            matches!(
+                &err,
+                VfsError::Decode { layer: "zip", detail, .. }
+                    if detail.contains("not a directory")
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn reading_a_directory_yields_no_bytes() {
+        // A directory (and the synthetic root) has no extractable data. Reading
+        // one is not an error — it is simply empty.
+        let fs = open();
+        let mut buf = [0xAAu8; 16];
+        assert_eq!(
+            fs.read_at(fs.root(), StreamId::Default, 0, &mut buf)
+                .expect("root read"),
+            0
+        );
+        assert_eq!(
+            fs.read_at(resolve(&fs, &[b"sub"]), StreamId::Default, 0, &mut buf)
+                .expect("dir read"),
+            0
+        );
+        assert_eq!(buf, [0xAAu8; 16], "the buffer is left untouched");
     }
 }
