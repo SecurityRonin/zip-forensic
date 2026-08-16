@@ -19,6 +19,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@9bdad043e88c75890e36ad3bbc8d27f0090dd609 # v2.7.8
         with:
+          cache-on-failure: true
           workspaces: fuzz
       - run: cargo install cargo-fuzz
       - name: Build all fuzz targets
