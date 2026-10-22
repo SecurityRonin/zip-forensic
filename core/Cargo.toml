@@ -32,7 +32,7 @@ thiserror = "2"
 # provides mid-stream decoder state save/restore, backing block-indexed seek.
 deflate64 = { version = "0.1", features = ["checkpoint"] }
 bzip2-rs = "0.1"         # method 12 — bzip2 decompress-only, pure Rust
-ruzstd = "0.8"           # method 93 — Zstandard decoder, pure Rust
+ruzstd = "0.9.1"         # method 93 — Zstandard decoder, pure Rust
 lzma-rs = "0.3"          # methods 14/95 — LZMA (ZIP wrapper) + XZ, pure Rust
 # Decryption. ZipCrypto is the ZIP format's own legacy cipher (implemented here);
 # WinZip AES uses audited RustCrypto primitives — NEVER hand-rolled (CLAUDE.md).
@@ -53,7 +53,7 @@ forensic-vfs = { version = "0.1", optional = true }
 # `cargo tree -p zip-core -e normal` is free of *-sys. This is the milestone that
 # removes the three C-FFI libs (bzip2-sys/zstd-sys/lzma-sys) from the fleet build.
 [dev-dependencies]
-zip = "2"
+zip = "9.0.5"
 tempfile = "3"
 
 [lints]
