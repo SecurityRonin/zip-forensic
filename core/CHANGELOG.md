@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3](https://github.com/SecurityRonin/zip-forensic/compare/zip-forensic-core-v0.2.2...zip-forensic-core-v0.2.3) - 2026-11-04
+
+### Fixed
+
+- *(security)* bump ruzstd to 0.9.1 and the zip oracle to 9
+
 ## [0.2.2](https://github.com/SecurityRonin/zip-forensic/compare/zip-forensic-core-v0.2.1...zip-forensic-core-v0.2.2) - 2026-08-08
 
 ### Fixed
